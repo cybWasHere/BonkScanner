@@ -65,10 +65,9 @@ Notes for Linux:
   fullscreen game only if they honour transient windows the same way.
 - The Twitch token needs a Secret Service keyring (KWallet 6, GNOME
   Keyring, KeePassXC); without one the bot cannot remember its login.
-
-- `PROCESS_NAME` in `config.json` defaults to `Megabonk.x86_64` on Linux. Set
-  it to `Megabonk.exe` when the game runs under Proton; the memory offsets are
-  chosen per binary automatically.
+- `PROCESS_NAME` in `config.json` can stay at its default `Megabonk.exe`: the
+  Linux backend also matches the native `Megabonk.x86_64`, and the memory
+  offsets are chosen per binary (`.dll` under Proton, `.so` native) automatically.
 - The app runs Qt on X11 (`QT_QPA_PLATFORM=xcb`, also under Wayland through
   XWayland) so the in-game overlay can be placed over the game window. On KDE
   Plasma the overlay is made a transient of the game window so it stacks above
