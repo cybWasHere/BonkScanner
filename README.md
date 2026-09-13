@@ -73,11 +73,7 @@ Notes for Linux:
   XWayland) so the in-game overlay can be placed over the game window. On KDE
   Plasma the overlay is made a transient of the game window so it stacks above
   it even when the game is fullscreen.
-- The auto-updater only serves Windows builds; update a source checkout with
-  `git pull`.
-- After a game update, `tools/verify_type_info.py` checks the Linux type-info
-  table against the running game and, given an Il2CppDumper `script.json`
-  for the new `GameAssembly.so`, prints the replacement addresses.
+- Updating: see *Updates* below.
 
 ## Windows
 
