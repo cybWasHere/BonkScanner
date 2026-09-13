@@ -12,47 +12,10 @@
 > No human has reviewed the code line by line. Read it before you trust it,
 > and expect rough edges on setups other than the one it was built on.
 
-**BonkScanner** is a Windows desktop tool for Megabonk reroll automation, live run inspection, saved-run review, OBS overlays, and Twitch chat integration.
+**BonkScanner** is a desktop tool for Megabonk reroll automation, live run inspection, saved-run review, OBS overlays, and Twitch chat integration. This branch runs it natively on Linux.
 It observes the running game locally, evaluates each reset in real time, and can keep rerolling until a selected template or score tier is found.
 
-## Download
-For most users, download the latest packaged Windows build from
-[GitHub Releases](https://github.com/ALuiell/BonkScanner/releases/latest).
-
-If you'd like to support the continued development of BonkScanner, you can grab a
-Supporter Pack or become a monthly supporter on
-[Patreon](https://www.patreon.com/cw/ALuiel). You can also make a
-[crypto donation](https://aluiell.github.io/BonkScanner/).
-
-BonkScanner uses functionality such as global hotkeys, local process memory reads,
-and a packaged `.exe` build. Because of that, some antivirus tools may warn about
-the executable. If this happens, download only from the official releases page or
-Patreon above. You can review the source code and the `build_exe.bat` script used
-to package the executable if you want to verify what the app does and how the
-release build is created.
-
-Use the Python setup below only if you want to run from source or develop the
-project.
-
-## Run From Source on Windows
-1. Install **Python 3.12 x64**.
-2. Open the project folder.
-3. Run `start.bat` once to create `.venv` and install dependencies.
-4. Run `run.bat` to launch the app.
-
-You can also launch manually after setup:
-
-```bat
-.\.venv\Scripts\python.exe src/main.py
-```
-
-`start.bat` is the normal setup entry point. It will:
-- create `.venv` if it does not exist;
-- upgrade pip inside the virtual environment;
-- install runtime dependencies from `src/requirements.txt`;
-- stop after the environment is ready.
-
-## Run From Source on Linux
+## Install on Linux
 
 The Linux port drives the native Linux build of Megabonk (`Megabonk.x86_64`)
 and, with the same code, the Windows build running under Proton. Only the OS
@@ -115,6 +78,17 @@ Notes for Linux:
 - After a game update, `tools/verify_type_info.py` checks the Linux type-info
   table against the running game and, given an Il2CppDumper `script.json`
   for the new `GameAssembly.so`, prints the replacement addresses.
+
+## Windows
+
+The Windows app is the original project. Packaged builds, Windows setup
+(`start.bat`, `run.bat`, `build_exe.bat`) and the auto-updater all live at
+[ALuiell/BonkScanner](https://github.com/ALuiell/BonkScanner); this fork leaves
+the Windows code paths untouched but does not ship or test Windows builds.
+
+If BonkScanner is useful to you, the person to support is its author: a
+Supporter Pack or monthly support on [Patreon](https://www.patreon.com/cw/ALuiel),
+or a [crypto donation](https://aluiell.github.io/BonkScanner/).
 
 ## Safety Notes
 BonkScanner is a local desktop tool. It does not modify Megabonk files on disk,
@@ -406,52 +380,49 @@ Notes:
 - `Safety Margin` is editable in Settings (`0.00` to `1.00`, default `0.05`). The effective scanner minimum is Megabonk's `0.01` minimum plus the selected margin; there is no separate `0.10` scanner floor;
 - every Settings save verifies the scanner config and synchronizes and verifies the game's `quick_reset_time`, even when the reset field itself did not change, so hand-edited drift is repaired;
 - if either config cannot be saved or verified, Settings stays open, keeps the last known-good runtime values, and shows the exact reason;
-- global hotkeys and keyboard-driven restart may require Administrator privileges on Windows.
+- global hotkeys and keyboard-driven restart need input-device access on Linux (see *Install on Linux*) and may require Administrator privileges on Windows.
 
-## Auto-Update Behavior
-- source runs (`python src/main.py`) do not auto-update themselves;
-- packaged builds can check for updates from the settings dialog;
-- skipped update versions are remembered in `config.json`;
-- the updater checks the latest GitHub release for `ALuiell/BonkScanner` and downloads the packaged `.exe` asset when a newer version is available.
+## Updates
 
-## Packaged Build
+A source checkout updates with `git pull`. The in-app updater belongs to the
+upstream packaged Windows build: it checks the `ALuiell/BonkScanner` releases and
+downloads a `.exe`, so on Linux it does nothing useful and can be ignored.
 
-`build_exe.bat` builds the community executable with PyInstaller. It packages the Python app, media assets, overlay files, and in-app help files into `dist\BonkScanner.exe`.
-
-Requirements:
-- Windows 10/11 x64;
-- Python 3.12 x64;
-- dependencies installed in `.venv` via `start.bat`;
-- internet access if PyInstaller needs to be installed into the virtual environment.
+After a Megabonk update the game's IL2CPP layout may change. Run
+`tools/verify_type_info.py` with the game open; it reports which classes in
+`src/infra/memory/offsets.py` no longer resolve and, given an Il2CppDumper
+`script.json` for the new `GameAssembly.so`, prints the replacement addresses.
 
 ## Dependencies
-Runtime dependencies are listed in `src/requirements.txt`:
-- `pymem==1.14.0`
-- `keyboard==0.13.5`
-- `colorama==0.4.6`
+
+Runtime dependencies are listed in `src/requirements.txt` with platform markers.
+
+Everywhere:
 - `PySide6>=6.8.0`
 - `requests~=2.33.1`
-- `pywin32>=306`
+- `colorama==0.4.6`
 
-`build_exe.bat` also installs `pyinstaller` into `.venv` when it is missing.
+Linux:
+- `evdev>=1.7.0` - global hotkeys and the reset key (needs a C compiler and Python headers to install)
+- `python-xlib>=0.33` - game window lookup, focus and geometry through X11 / XWayland
+- `keyring>=25.0` - Twitch token storage through the Secret Service (KWallet, GNOME Keyring, KeePassXC)
+
+Windows only, unused here: `pymem`, `keyboard`, `pywin32`.
 
 ## Manual Developer Setup
-If you want to run manually instead of using `start.bat`:
 
-```powershell
-py -3.12 -m venv .venv
-.\.venv\Scripts\Activate.ps1
-python -m pip install --upgrade pip
-python -m pip install -r src/requirements.txt
-python src/main.py
+`start.sh` does all of this; by hand it is:
+
+```bash
+python3 -m venv --copies .venv
+.venv/bin/python3 -m pip install --upgrade pip
+.venv/bin/python3 -m pip install -r src/requirements.txt
+sudo setcap cap_sys_ptrace=ep "$(readlink -f .venv/bin/python3)"
+.venv/bin/python3 src/main.py
 ```
 
-
-To build the packaged executable:
-
-```bat
-build_exe.bat
-```
+The `setcap` step has to be repeated whenever `.venv` is rebuilt. Qt is started
+on the `xcb` platform by default; set `QT_QPA_PLATFORM` yourself to override.
 
 ## Project Structure
 - `src/main.py` - desktop app entry point.
@@ -468,7 +439,12 @@ build_exe.bat
 - `src/app/config.py` - app config, game config integration, templates, scores, overlay, Twitch, and compare settings.
 - `src/core/logic.py` - template and score evaluation logic.
 - `src/infra/memory/game_data_client.py` - map-ready state, counters, seed-related runtime reads, and scan data.
-- `src/infra/memory/reader.py` - low-level `pymem` wrappers and memory helpers.
+- `src/infra/memory/reader.py` - low-level memory helpers over `pymem` (Windows) or `linux_process.py`.
+- `src/infra/memory/linux_process.py` - Linux process lookup, module bases and reads through `/proc` and `process_vm_readv`.
+- `src/infra/memory/offsets.py` - IL2CPP type-info addresses per game binary (Windows `.dll`, Linux `.so`).
+- `src/infra/linux_keyboard.py` and `src/infra/keyboard_backend.py` - evdev/uinput hotkeys and key injection, selected per platform.
+- `src/infra/x11_windows.py` and `src/infra/winapi.py` - the `win32gui` call surface implemented over X11, selected per platform.
+- `tools/verify_type_info.py` - checks the offsets table against the running game.
 - `src/infra/memory/player_stats_client.py` - live player stats, passive items, weapons, tomes, banishes, damage sources, and chest-rate calculations.
 - `src/infra/memory/map_marker_client.py` - Full Map projection, map/player/stage identity, and opt-in nearby activity discovery.
 - `src/app/refresh_coordinator.py`, `src/app/read_sources.py`, and `src/app/refresh_tasks.py` - demand-driven memory-read scheduling and per-tick read sharing.
@@ -484,29 +460,30 @@ build_exe.bat
 - `src/core/run_summary.py` - recording and compare summary helpers.
 - `src/core/run_control.py` and `src/infra/keyboard_run_control.py` - restart port and keyboard adapter.
 - `src/app/update_flow.py` and `src/infra/updater.py` - packaged-build update checks and application flow.
-- `src\tests` - unit tests.
-- `src\media\overlay` - browser overlay HTML, CSS, JS, and preview asset.
-- `src\media\help` - packaged in-app help text in English, Ukrainian, and Russian.
+- `src/tests` - unit tests.
+- `src/media/overlay` - browser overlay HTML, CSS, JS, and preview asset.
+- `src/media/help` - in-app help text in English, Ukrainian, and Russian.
 
 ## Developer Validation
 
-Run the repository's canonical test entry point from a Windows command prompt:
-
-```bat
-run_tests.bat
+```bash
+./run_tests.sh              # whole suite
+./run_tests.sh test_linux_backends   # one module
 ```
 
-Wait for the final `OK`; a partial run or an interrupted run is not a pass.
+On Linux a handful of upstream tests fail by design: the Windows-only updater
+and `ctypes.windll` tests, tests that assert Windows font metrics in Qt layouts,
+and two that format numbers with the system locale. Everything else, including
+the Linux backend tests, must pass.
 
 ## Basic Usage
 1. Start Megabonk and wait until the target scene is loaded.
-2. Run `start.bat` if the environment is not ready yet.
-3. Launch BonkScanner with `run.bat`.
-4. Choose `Templates` or `Scores`.
-5. Configure your filters, score tiers, and optional recording/overlay/Twitch settings.
-6. Press `Start`.
-7. Press the scan hotkey in-game to arm or pause the scanning loop.
-8. When a matching map is found, the app stops and logs the result.
+2. Run `./start.sh` (first run installs everything and asks for `sudo` once).
+3. Choose `Templates` or `Scores`.
+4. Configure your filters, score tiers, and optional recording/overlay/Twitch settings.
+5. Press `Start`.
+6. Press the scan hotkey in-game to arm or pause the scanning loop.
+7. When a matching map is found, the app stops and logs the result.
 
 BonkScanner is meant to reduce repetition, speed up rerolling, and make target hunting less frustrating while also giving streamers and run reviewers better live data.
 
