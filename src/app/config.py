@@ -450,11 +450,18 @@ def linux_game_config_candidates() -> list[str]:
     home = os.path.expanduser("~")
     config_home = os.environ.get("XDG_CONFIG_HOME") or os.path.join(home, ".config")
     candidates = [os.path.join(config_home, "unity3d", GAME_CONFIG_RELATIVE_PATH)]
+    # Sandboxed Steam keeps the game's XDG config home inside its own tree.
+    for sandbox_config_home in (
+        os.path.join(home, ".var", "app", "com.valvesoftware.Steam", "config"),
+        os.path.join(home, "snap", "steam", "common", ".config"),
+    ):
+        candidates.append(os.path.join(sandbox_config_home, "unity3d", GAME_CONFIG_RELATIVE_PATH))
 
     steam_roots = [
         os.path.join(home, ".local", "share", "Steam"),
         os.path.join(home, ".steam", "steam"),
         os.path.join(home, ".var", "app", "com.valvesoftware.Steam", ".local", "share", "Steam"),
+        os.path.join(home, "snap", "steam", "common", ".local", "share", "Steam"),
     ]
     libraries: list[str] = []
     for root in steam_roots:

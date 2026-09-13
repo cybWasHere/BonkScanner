@@ -11,7 +11,11 @@ if [ ! -x .venv/bin/python3 ]; then
   "$PYTHON" -m venv --copies .venv
 fi
 .venv/bin/python3 -m pip install --quiet --upgrade pip
-.venv/bin/python3 -m pip install --quiet -r src/requirements.txt
+.venv/bin/python3 -m pip install --quiet -r src/requirements.txt || {
+  echo "Dependency install failed. evdev is built from source: install a C compiler and the"
+  echo "Python headers (python3-dev/python3-devel and gcc), then run ./start.sh again."
+  exit 1
+}
 
 # Reading the game's memory needs ptrace permission. The default Yama scope (1)
 # only allows reading descendants, so grant CAP_SYS_PTRACE to the venv Python.

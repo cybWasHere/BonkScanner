@@ -48,7 +48,10 @@ glue differs from the Windows app: process memory is read through `/proc`,
 hotkeys and the reset key go through `evdev`/`uinput`, windows are found
 through X11, and the Twitch token lives in the desktop keyring.
 
-1. Install Python 3.12+ and `git`, then:
+1. Install Python 3.12+, `git`, and a C compiler with the Python headers
+   (`python3-dev` and `gcc` on Debian/Ubuntu, `python3-devel` and `gcc` on
+   Fedora; Arch has them with `base-devel`), which the `evdev` package is
+   built with. Then:
 
    ```bash
    git clone https://github.com/ALuiell/BonkScanner.git
@@ -77,6 +80,16 @@ through X11, and the Twitch token lives in the desktop keyring.
    Use `./run_tests.sh` for the unit tests.
 
 Notes for Linux:
+
+- Works in X11 sessions and in Wayland sessions through XWayland: the game
+  must be an X11 window (the native Unity build and Proton both are by
+  default). A game forced onto native Wayland (`SDL_VIDEODRIVER=wayland`,
+  `PROTON_ENABLE_WAYLAND=1`) is invisible to the window backend: memory
+  reads still work, but focus detection and the in-game overlay do not.
+- Verified on KDE Plasma 6. Other compositors stack the overlay above a
+  fullscreen game only if they honour transient windows the same way.
+- The Twitch token needs a Secret Service keyring (KWallet 6, GNOME
+  Keyring, KeePassXC); without one the bot cannot remember its login.
 
 - `PROCESS_NAME` in `config.json` defaults to `Megabonk.x86_64` on Linux. Set
   it to `Megabonk.exe` when the game runs under Proton; the memory offsets are
