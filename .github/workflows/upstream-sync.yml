@@ -1,0 +1,74 @@
+name: Sync with upstream and test
+
+# Weekly: merge ALuiell/BonkScanner main into linux-native, run the Linux
+# tests, push if they pass. A merge conflict fails the run (GitHub emails the
+# fork owner) and leaves the branch untouched. On every push to linux-native
+# the same tests run as plain CI. Run it by hand from the Actions tab any time.
+on:
+  schedule:
+    - cron: "17 6 * * 1"
+  workflow_dispatch:
+  push:
+    branches: [linux-native]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: upstream-sync
+  cancel-in-progress: false
+
+jobs:
+  sync-and-test:
+    runs-on: ubuntu-latest
+    env:
+      QT_QPA_PLATFORM: offscreen
+      PYTHONPATH: ${{ github.workspace }}:${{ github.workspace }}/src:${{ github.workspace }}/src/tests
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: linux-native
+          fetch-depth: 0
+
+      - name: Merge upstream/main
+        id: merge
+        if: github.event_name != 'push'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git remote add upstream https://github.com/ALuiell/BonkScanner.git
+          git fetch --quiet upstream main
+          new=$(git rev-list --count HEAD..upstream/main)
+          echo "new=$new" >> "$GITHUB_OUTPUT"
+          if [ "$new" = 0 ]; then
+            echo "Already up to date with upstream ($(git rev-parse --short upstream/main))."
+            exit 0
+          fi
+          echo "Upstream has $new new commit(s):"
+          git log --oneline HEAD..upstream/main
+          if ! git merge --no-edit upstream/main; then
+            git merge --abort
+            echo "::error::Merge conflict with upstream. Resolve locally: git fetch upstream && git merge upstream/main"
+            exit 1
+          fi
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Linux dependencies
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q libegl1 libopengl0 libgl1 libxkbcommon-x11-0 libxcb-cursor0
+          python -m pip install --quiet --upgrade pip
+          python -m pip install --quiet -r src/requirements.txt
+
+      - name: Linux backend tests (required)
+        run: timeout 10m python -m unittest test_linux_backends
+
+      - name: Full suite (informational; a few upstream tests are Windows-only)
+        run: timeout 20m python -m unittest discover -s src/tests -p 'test_*.py' 2>&1 | tail -n 6 || true
+
+      - name: Push merged branch
+        if: github.event_name != 'push' && steps.merge.outputs.new != '0'
+        run: git push origin HEAD:linux-native
