@@ -14,6 +14,7 @@ from __future__ import annotations
 import time
 from typing import Callable
 
+from infra.memory.offsets import apply_type_info_offsets
 from infra.memory.reader import MemoryReadError, ProcessMemory
 
 from core.game_state import (
@@ -45,6 +46,18 @@ class GameDataClient:
     MUSIC_CONTROLLER_TYPE_INFO_OFFSET = 0x2F617C8
     MY_TIME_TYPE_INFO_OFFSET = 0x2F62398
     PLAYER_MOVEMENT_TYPE_INFO_OFFSET = 0x2F6D670
+    # Which game class each slot above names; ``infra.memory.offsets`` swaps
+    # the values per binary (Windows .dll vs native Linux .so) on the instance.
+    TYPE_INFO_CLASSES = {
+        "TYPE_INFO_OFFSET": "InteractablesStatus",
+        "GAME_MANAGER_TYPE_INFO_OFFSET": "GameManager",
+        "LOADING_SCREEN_TYPE_INFO_OFFSET": "LoadingScreen",
+        "MAP_CONTROLLER_TYPE_INFO_OFFSET": "MapController",
+        "MAP_GENERATION_CONTROLLER_TYPE_INFO_OFFSET": "MapGenerationController",
+        "MUSIC_CONTROLLER_TYPE_INFO_OFFSET": "MusicController",
+        "MY_TIME_TYPE_INFO_OFFSET": "MyTime",
+        "PLAYER_MOVEMENT_TYPE_INFO_OFFSET": "PlayerMovement",
+    }
     CLASS_STATIC_FIELDS_OFFSET = 0xB8
     INTERACTABLES_DICT_OFFSET = 0x0
     GAME_MANAGER_INSTANCE_OFFSET = 0x0
@@ -120,6 +133,7 @@ class GameDataClient:
         self.module_name = module_name
         self._owns_memory = memory is None
         self.memory: MemoryReader = memory or ProcessMemory(process_name)
+        self.offset_table = apply_type_info_offsets(self, self.memory, self.module_name)
         self._cached_static_fields: dict[int, int] = {}
         self._last_activity_revision: tuple[int, int, int, int] | None = None
         self._last_accepted_activity_revision: tuple[int, int, int, int] | None = None

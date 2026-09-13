@@ -21,6 +21,7 @@ from core.character_passives import (
     CharacterPassiveReading,
 )
 from core.item_metadata import ITEM_DISPLAY_NAME_BY_RAW_VALUE, ITEM_ENUM_NAMES_BY_ID
+from infra.memory.offsets import apply_type_info_offsets
 from infra.memory.reader import MemoryReadError, ProcessMemory
 
 from core.stats.formats import (
@@ -198,6 +199,22 @@ class PlayerStatsClient:
     RUN_UNLOCKABLES_TYPE_INFO_OFFSET = 0x02F7A210
     DATA_MANAGER_TYPE_INFO_OFFSET = 0x02F85790
     POTATO_TYPE_INFO_OFFSET = 0x02F6FC78
+    # Which game class each ``*_TYPE_INFO_OFFSET`` on this class names (the
+    # two declared further down included); ``infra.memory.offsets`` swaps the
+    # values per binary (Windows .dll vs native Linux .so) on the instance.
+    TYPE_INFO_CLASSES = {
+        "TYPE_INFO_OFFSET": "PlayerStatsRoot",
+        "MONEY_UTILITY_TYPE_INFO_OFFSET": "MoneyUtility",
+        "MAP_CONTROLLER_TYPE_INFO_OFFSET": "MapController",
+        "RUN_TIMER_TYPE_INFO_OFFSET": "MyTime",
+        "RUN_STATS_TYPE_INFO_OFFSET": "RunStats",
+        "RUN_UNLOCKABLES_TYPE_INFO_OFFSET": "RunUnlockables",
+        "DATA_MANAGER_TYPE_INFO_OFFSET": "DataManager",
+        "POTATO_TYPE_INFO_OFFSET": "Potato",
+        "RSG_CONTROLLER_TYPE_INFO_OFFSET": "RsgController",
+        "ACHIEVEMENT_TRACKER_TYPE_INFO_OFFSET": "AchievementTracker",
+        "SHRINE_LOGS_TYPE_INFO_OFFSET": "ShrineLogs",
+    }
     CLASS_STATIC_FIELDS_OFFSET = 0xB8
     STATIC_ROOT_OFFSET = 0x0
     OWNER_STATS_OFFSET = 0x40
@@ -353,6 +370,7 @@ class PlayerStatsClient:
         self.module_name = module_name
         self._owns_memory = memory is None
         self.memory: MemoryReader = memory or ProcessMemory(process_name)
+        self.offset_table = apply_type_info_offsets(self, self.memory, self.module_name)
         self._cached_chests_bought_dict = 0
         self._cached_chests_bought_entries = 0
         self._cached_chests_bought_count = -1

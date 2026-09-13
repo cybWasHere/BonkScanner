@@ -1,11 +1,36 @@
 from __future__ import annotations
 
 import struct
+import sys
 from typing import Any
 
-import pymem
-import pymem.exception
-import pymem.process
+if sys.platform == "win32":
+    import pymem
+    import pymem.exception
+    import pymem.process
+
+    linux_process = None
+    _PROCESS_OPEN_ERRORS: tuple[type[BaseException], ...] = (
+        pymem.exception.ProcessNotFound,
+        pymem.exception.CouldNotOpenProcess,
+    )
+else:
+    # Linux reads through /proc and process_vm_readv; see infra.memory.linux_process.
+    pymem = None
+    from infra.memory import linux_process
+
+    _PROCESS_OPEN_ERRORS = (
+        linux_process.ProcessNotFound,
+        linux_process.CouldNotOpenProcess,
+    )
+
+
+def _access_detail(exc: BaseException) -> str:
+    """The Linux permission hint, when that is what went wrong; else nothing."""
+
+    if linux_process is not None and isinstance(exc, linux_process.CouldNotOpenProcess):
+        return f" {exc}"
+    return ""
 
 
 class ProcessNotFoundError(Exception):
@@ -62,20 +87,24 @@ class ProcessMemory:
             return
 
         try:
-            self._pm = pymem.Pymem(process_name)
-        except (
-            pymem.exception.ProcessNotFound,
-            pymem.exception.CouldNotOpenProcess,
-        ) as exc:
+            if pymem is not None:
+                self._pm = pymem.Pymem(process_name)
+            else:
+                self._pm = linux_process.LinuxProcess(process_name)
+        except _PROCESS_OPEN_ERRORS as exc:
             raise ProcessNotFoundError(
-                f"Could not open process '{process_name}'."
+                f"Could not open process '{process_name}'.{_access_detail(exc)}"
             ) from exc
         except Exception as exc:
             raise MemoryReadError(
                 f"Failed to initialize memory access for '{process_name}'."
             ) from exc
 
-        self._module_from_name = pymem.process.module_from_name
+        self._module_from_name = (
+            pymem.process.module_from_name
+            if pymem is not None
+            else linux_process.module_from_name
+        )
 
     def close(self) -> None:
         # Closing releases the handle the cache was keyed against, and Windows
@@ -130,6 +159,23 @@ class ProcessMemory:
 
     def module_offset(self, module_name: str, offset: int) -> int:
         return self.module_base_address(module_name) + offset
+
+    def resolved_module_name(self, module_name: str) -> str:
+        """The file name actually mapped for ``module_name``.
+
+        ``GameAssembly.dll`` resolves to ``GameAssembly.so`` in a native Linux
+        game; the per-binary offset tables key on that.  Falls back to the
+        requested name when the module cannot be looked up.
+        """
+
+        if self._pm is None:
+            return module_name
+        try:
+            module = self._module_from_name(self._pm.process_handle, module_name)
+        except Exception:
+            return module_name
+        name = getattr(module, "name", None)
+        return str(name) if name else module_name
 
     def read_bytes(self, address: int, size: int) -> bytes:
         if self._pm is None:

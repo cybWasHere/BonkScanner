@@ -39,7 +39,7 @@ from app.map_marker_tracker import MapMarkerTracker
 from app.shutdown import ShutdownDeadline
 from core.map_markers import MapMarkerSnapshot
 from infra.crash_journal import log_runtime_event
-from infra.map_marker_input import WindowsMapMarkerInput
+from infra.map_marker_input import WindowsMapMarkerInput, default_map_marker_input
 from projections.in_game import project_in_game_overlay
 from projections.in_game_html import (
     build_build_progression_overlay_html,
@@ -108,7 +108,7 @@ class InGameOverlay:
         timer_factory: Callable[[], Any] = QTimer,
         map_marker_tracker_factory: Callable[[str], Any] = MapMarkerTracker,
         map_marker_executor_factory: Callable[[], Executor] = _build_map_marker_executor,
-        map_marker_input_factory: Callable[[], Any] = WindowsMapMarkerInput,
+        map_marker_input_factory: Callable[[], Any] = default_map_marker_input,
         map_marker_hotkey_controller_factory: Callable[[Any], Any] = MapMarkerHotkeyController,
         build_progression_snapshot: Callable[[], Any] = lambda: None,
         open_build_progression_settings: Callable[[], None] = lambda: None,
@@ -362,6 +362,27 @@ class InGameOverlay:
 
     # -- geometry ----------------------------------------------------------
 
+    def _pin_overlay_to_game_window(self) -> None:
+        """X11 only: make the overlay a transient of the game window.
+
+        Window managers stack a transient above its owner even when the owner
+        is an active fullscreen window, which is the one place the overlay has
+        to be.  On Windows the top-most flag already does this; the X11 shim
+        exposes ``SetTransientFor`` and pywin32 does not, so this is a no-op
+        there.
+        """
+
+        pin = getattr(win32gui, "SetTransientFor", None)
+        window = self.in_game_overlay_window
+        if pin is None or window is None or self._find_game_window is None:
+            return
+        try:
+            game_window = self._find_game_window(config.PROCESS_NAME)
+            if game_window:
+                pin(int(window.winId()), int(game_window))
+        except Exception:
+            pass
+
     def _in_game_overlay_target_geometry(self) -> QRect | None:
         physical_geometry = self._in_game_overlay_physical_client_geometry()
         if physical_geometry is not None:
@@ -610,6 +631,7 @@ class InGameOverlay:
             if not window.isVisible():
                 window.sync_geometry_to_target()
                 window.show()
+                self._pin_overlay_to_game_window()
         self._set_map_marker_snapshot(snapshot)
         return snapshot.map_open
 
@@ -883,12 +905,14 @@ class InGameOverlay:
             self.in_game_overlay_window.sync_geometry_to_target()
             if not self.in_game_overlay_window.isVisible():
                 self.in_game_overlay_window.show()
+                self._pin_overlay_to_game_window()
         else:
             is_game_active = self._is_game_window_active(config.PROCESS_NAME)
             if is_game_active:
                 self.in_game_overlay_window.sync_geometry_to_target()
                 if not self.in_game_overlay_window.isVisible():
                     self.in_game_overlay_window.show()
+                    self._pin_overlay_to_game_window()
             elif self.in_game_overlay_window.isVisible():
                 self.in_game_overlay_window.hide()
 

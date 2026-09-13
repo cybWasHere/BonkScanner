@@ -13,6 +13,7 @@ import struct
 from typing import Any, Callable
 
 from core.map_markers import MapViewport, action_id_for_interactable
+from infra.memory.offsets import apply_type_info_offsets
 from infra.memory.reader import MemoryReadError, ProcessMemory
 
 
@@ -72,6 +73,14 @@ class MapMarkerMemoryClient:
     PAUSE_UI_CURRENT_OFFSET = 0x38
 
     FULL_MAP_UI_TYPE_INFO_OFFSET = 0x2F9AF30
+    # Which game class each slot above names; ``infra.memory.offsets`` swaps
+    # the values per binary (Windows .dll vs native Linux .so) on the instance.
+    TYPE_INFO_CLASSES = {
+        "MY_PLAYER_TYPE_INFO_OFFSET": "MyPlayer",
+        "MAP_CONTROLLER_TYPE_INFO_OFFSET": "MapController",
+        "UI_MANAGER_TYPE_INFO_OFFSET": "UiManager",
+        "FULL_MAP_UI_TYPE_INFO_OFFSET": "FullMapUi",
+    }
     FULL_MAP_TOGGLE_DELEGATE_OFFSET = 0x0
     FULL_MAP_WORLD_SIZE_OFFSET = 0x28
     FULL_MAP_DISPLAY_TRANSFORM_OFFSET = 0x50
@@ -146,6 +155,7 @@ class MapMarkerMemoryClient:
         self.module_name = module_name
         self._owns_memory = memory is None
         self.memory = memory or ProcessMemory(str(process_name))
+        self.offset_table = apply_type_info_offsets(self, self.memory, self.module_name)
         self._module_base = int(self.memory.module_base_address(self.module_name))
         self._full_map_ptr = 0
         self._player_ptr = 0

@@ -78,3 +78,68 @@ class WindowsMapMarkerInput:
 
     def _vk_pressed(self, virtual_key: int) -> bool:
         return bool(self._user32.GetAsyncKeyState(int(virtual_key)) & 0x8000)
+
+
+class LinuxMapMarkerInput:
+    """The same two questions answered from evdev state and the X11 pointer.
+
+    ``keyboard`` is the evdev backend (``infra.linux_keyboard.LinuxKeyboard``),
+    which tracks pressed keys and mouse buttons; ``cursor`` is any callable
+    returning the pointer position on the root window, by default the X11
+    shim's ``GetCursorPos``.
+    """
+
+    _MODIFIER_NAMES = {
+        "shift": ("left shift", "right shift"),
+        "ctrl": ("left ctrl", "right ctrl"),
+        "alt": ("left alt", "right alt"),
+        "win": ("left windows", "right windows"),
+    }
+
+    def __init__(self, keyboard=None, cursor=None) -> None:
+        self._keyboard = keyboard
+        self._cursor = cursor
+        if self._keyboard is None and os.name != "nt":
+            from infra.keyboard_backend import load_keyboard
+
+            self._keyboard = load_keyboard()
+        if self._cursor is None and os.name != "nt":
+            from infra.winapi import win32gui
+
+            self._cursor = getattr(win32gui, "GetCursorPos", None)
+
+    def is_pressed(self, binding: str) -> bool:
+        if self._keyboard is None:
+            return False
+        parts = [part for part in str(binding).lower().split("+") if part]
+        if not parts:
+            return False
+        try:
+            if not self._keyboard.is_pressed(parts[-1]):
+                return False
+            for modifier in parts[:-1]:
+                names = self._MODIFIER_NAMES.get(modifier, (modifier,))
+                if not any(self._keyboard.is_pressed(name) for name in names):
+                    return False
+        except (ValueError, KeyboardInterrupt):
+            return False
+        except Exception:
+            return False
+        return True
+
+    def cursor_position(self) -> tuple[int, int]:
+        if self._cursor is None:
+            return (0, 0)
+        try:
+            x, y = self._cursor()
+        except Exception:
+            return (0, 0)
+        return (int(x), int(y))
+
+
+def default_map_marker_input():
+    """The platform's non-capturing input reader for map-marker gestures."""
+
+    if os.name == "nt":
+        return WindowsMapMarkerInput()
+    return LinuxMapMarkerInput()

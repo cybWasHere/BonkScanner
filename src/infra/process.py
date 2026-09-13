@@ -16,12 +16,8 @@ from __future__ import annotations
 import ctypes
 import os
 
-try:
-    import win32gui
-    import win32process
-except ImportError:
-    win32gui = None
-    win32process = None
+# pywin32 on Windows, the X11 shim on Linux, or None headless.
+from infra.winapi import win32gui, win32process
 
 
 GWL_EXSTYLE = -20
@@ -36,6 +32,42 @@ def is_running_as_admin() -> bool:
         return bool(ctypes.windll.shell32.IsUserAnAdmin())
     except Exception:
         return False
+
+
+def memory_access_hint() -> str | None:
+    """Linux only: a warning when reading another process's memory will be refused.
+
+    The Windows equivalent is the administrator check above; on Linux the
+    gate is ptrace permission, and the hint says how to grant it.
+    """
+
+    if os.name == "nt":
+        return None
+    try:
+        from infra.memory.linux_process import ptrace_permission_hint
+    except ImportError:
+        return None
+    return ptrace_permission_hint()
+
+
+def process_image_name(process_id: int) -> str | None:
+    """Linux: the executable basename of a pid from ``/proc``, lowercased."""
+
+    if os.name == "nt":
+        return None
+    try:
+        from infra.memory.linux_process import _process_names
+    except ImportError:
+        return None
+    try:
+        process_id = int(process_id)
+    except (TypeError, ValueError):
+        return None
+    if process_id <= 0:
+        return None
+    comm, argv0 = _process_names(process_id)
+    name = argv0 or comm
+    return name.strip().lower() or None
 
 def is_visible_window(window: int) -> bool:
     try:

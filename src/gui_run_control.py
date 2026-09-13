@@ -29,17 +29,12 @@ from infra.hotkeys import HotkeyBinding, ModifierAwareHotkeyManager
 from infra.keyboard_run_control import KeyboardRunControlProvider
 from infra import process
 
-try:
-    import win32gui
-    import win32process
-except ImportError:
-    win32gui = None
-    win32process = None
+# pywin32 on Windows, the X11 shim on Linux, or None when neither is usable.
+from infra.winapi import win32gui, win32process
+# The ``keyboard`` package on Windows, the evdev backend on Linux, or None.
+from infra.keyboard_backend import load_keyboard
 
-try:
-    import keyboard
-except ImportError:
-    keyboard = None
+keyboard = load_keyboard()
 
 
 PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
@@ -110,6 +105,9 @@ class RunControl:
 
     def check_admin_rights(self):
         if os.name != "nt":
+            hint = process.memory_access_hint()
+            if hint:
+                self._log(f"⚠️ WARNING: {hint}", tag="warning")
             return
         if not process.is_running_as_admin():
             self._log("\u26a0\ufe0f WARNING: Script is not running as Administrator!", tag="warning")
@@ -317,6 +315,13 @@ class RunControl:
             win32gui.ShowWindow(window, 5)
 
     def try_attach_foreground_window(self, window: int) -> None:
+        if os.name != "nt":
+            # No thread-input attachment on X11: ask the window manager and
+            # let the caller re-check the foreground window afterwards.
+            if hasattr(win32gui, "BringWindowToTop"):
+                win32gui.BringWindowToTop(window)
+            win32gui.SetForegroundWindow(window)
+            return
         user32 = ctypes.windll.user32
         kernel32 = ctypes.windll.kernel32
         user32.AttachThreadInput.argtypes = [wintypes.DWORD, wintypes.DWORD, wintypes.BOOL]
@@ -363,7 +368,7 @@ class RunControl:
     @staticmethod
     def _process_image_name(process_id: int) -> str | None:
         if os.name != "nt":
-            return None
+            return process.process_image_name(process_id)
         try:
             process_id = int(process_id)
         except (TypeError, ValueError):

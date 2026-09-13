@@ -23,6 +23,9 @@ dependencies or the packaging environment change.
 | [idna](https://github.com/kjd/idna) | BSD-3-Clause |
 | [urllib3](https://github.com/urllib3/urllib3) | MIT |
 | [pywin32](https://github.com/mhammond/pywin32) | Python Software Foundation License |
+| [python-evdev](https://github.com/gvalkov/python-evdev) (Linux) | BSD-3-Clause |
+| [python-xlib](https://github.com/python-xlib/python-xlib) (Linux) | LGPL-2.1-or-later |
+| [keyring](https://github.com/jaraco/keyring) (Linux) | MIT |
 
 Packaged Windows releases use the
 [PyInstaller](https://pyinstaller.org/) bootloader. PyInstaller is licensed

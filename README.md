@@ -40,6 +40,57 @@ You can also launch manually after setup:
 - install runtime dependencies from `src/requirements.txt`;
 - stop after the environment is ready.
 
+## Run From Source on Linux
+
+The Linux port drives the native Linux build of Megabonk (`Megabonk.x86_64`)
+and, with the same code, the Windows build running under Proton. Only the OS
+glue differs from the Windows app: process memory is read through `/proc`,
+hotkeys and the reset key go through `evdev`/`uinput`, windows are found
+through X11, and the Twitch token lives in the desktop keyring.
+
+1. Install Python 3.12+ and `git`, then:
+
+   ```bash
+   git clone https://github.com/ALuiell/BonkScanner.git
+   cd BonkScanner
+   ./start.sh
+   ```
+
+   `start.sh` creates `.venv`, installs the Linux requirements, and asks for
+   `sudo` once to grant the venv's Python `CAP_SYS_PTRACE` (reading another
+   process's memory is otherwise refused by the kernel's default
+   `ptrace_scope`). Re-run it any time; it only installs what is missing.
+
+2. Let your user read input devices and write `/dev/uinput`, which global
+   hotkeys and the reset key need. Either add yourself to the `input` group and
+   log in again, or install a udev rule that grants the active seat access:
+
+   ```bash
+   sudo tee /etc/udev/rules.d/71-bonkscanner-input.rules <<'RULES'
+   SUBSYSTEM=="input", KERNEL=="event*", TAG+="uaccess"
+   KERNEL=="uinput", SUBSYSTEM=="misc", TAG+="uaccess"
+   RULES
+   sudo udevadm control --reload && sudo udevadm trigger --subsystem-match=input
+   ```
+
+3. Start the game, then `./start.sh` (or `.venv/bin/python3 src/main.py`).
+   Use `./run_tests.sh` for the unit tests.
+
+Notes for Linux:
+
+- `PROCESS_NAME` in `config.json` defaults to `Megabonk.x86_64` on Linux. Set
+  it to `Megabonk.exe` when the game runs under Proton; the memory offsets are
+  chosen per binary automatically.
+- The app runs Qt on X11 (`QT_QPA_PLATFORM=xcb`, also under Wayland through
+  XWayland) so the in-game overlay can be placed over the game window. On KDE
+  Plasma the overlay is made a transient of the game window so it stacks above
+  it even when the game is fullscreen.
+- The auto-updater only serves Windows builds; update a source checkout with
+  `git pull`.
+- After a game update, `tools/verify_type_info.py` checks the Linux type-info
+  table against the running game and, given an Il2CppDumper `script.json`
+  for the new `GameAssembly.so`, prints the replacement addresses.
+
 ## Safety Notes
 BonkScanner is a local desktop tool. It does not modify Megabonk files on disk,
 install game mods, or send gameplay data anywhere by default.

@@ -1,6 +1,12 @@
-pymem==1.14.0
-keyboard==0.13.5
+# Cross-platform
 colorama==0.4.6
 PySide6>=6.8.0
 requests~=2.33.1
-pywin32>=306
+# Windows: process memory, global hotkeys, window management, credential store
+pymem==1.14.0; sys_platform == "win32"
+keyboard==0.13.5; sys_platform == "win32"
+pywin32>=306; sys_platform == "win32"
+# Linux: evdev/uinput hotkeys, X11 window queries, Secret Service / KWallet credentials
+evdev>=1.7.0; sys_platform == "linux"
+python-xlib>=0.33; sys_platform == "linux"
+keyring>=25.0; sys_platform == "linux"
