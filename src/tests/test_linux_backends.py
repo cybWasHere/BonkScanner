@@ -269,3 +269,46 @@ class OffsetTableTests(unittest.TestCase):
             self.assertEqual(constants, set(mapping), client_type.__name__)
             for attribute, key in mapping.items():
                 self.assertEqual(offsets.WINDOWS[key], getattr(client_type, attribute), f"{client_type.__name__}.{attribute}")
+
+
+class GameConfigPathTests(unittest.TestCase):
+    @unittest.skipUnless(os.name != "nt", "Linux path resolution")
+    def test_native_unity_path_is_first_and_used_when_present(self) -> None:
+        from app import config as app_config
+        from unittest import mock
+
+        with tempfile.TemporaryDirectory() as home:
+            native = Path(home) / ".config" / "unity3d" / "Ved" / "Megabonk" / "Saves" / "LocalDir" / "config.json"
+            native.parent.mkdir(parents=True)
+            native.write_text("{}")
+            with mock.patch.dict(os.environ, {"HOME": home, "XDG_CONFIG_HOME": ""}):
+                candidates = app_config.linux_game_config_candidates()
+                self.assertEqual(str(native), candidates[0])
+                self.assertEqual(str(native), app_config.get_game_config_path())
+
+    @unittest.skipUnless(os.name != "nt", "Linux path resolution")
+    def test_newest_existing_candidate_wins(self) -> None:
+        from app import config as app_config
+        from unittest import mock
+
+        with tempfile.TemporaryDirectory() as home:
+            native = Path(home) / ".config" / "unity3d" / app_config.GAME_CONFIG_RELATIVE_PATH
+            proton = (Path(home) / ".local" / "share" / "Steam" / "steamapps" / "compatdata" / app_config.MEGABONK_STEAM_APP_ID
+                      / "pfx" / "drive_c" / "users" / "steamuser" / "AppData" / "LocalLow" / app_config.GAME_CONFIG_RELATIVE_PATH)
+            for path in (native, proton):
+                path.parent.mkdir(parents=True)
+                path.write_text("{}")
+            os.utime(native, (1_000_000, 1_000_000))
+            os.utime(proton, (2_000_000, 2_000_000))
+            with mock.patch.dict(os.environ, {"HOME": home, "XDG_CONFIG_HOME": ""}):
+                self.assertEqual(str(proton), app_config.get_game_config_path())
+
+    @unittest.skipUnless(os.name != "nt", "Linux path resolution")
+    def test_missing_files_fall_back_to_the_native_path(self) -> None:
+        from app import config as app_config
+        from unittest import mock
+
+        with tempfile.TemporaryDirectory() as home:
+            with mock.patch.dict(os.environ, {"HOME": home, "XDG_CONFIG_HOME": ""}):
+                path = app_config.get_game_config_path()
+                self.assertTrue(path and path.startswith(os.path.join(home, ".config", "unity3d")))

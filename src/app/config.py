@@ -426,20 +426,74 @@ class SettingsSaveResult:
     reason: str = ""
 
 
-def get_game_config_path() -> str | None:
+GAME_CONFIG_RELATIVE_PATH = os.path.join("Ved", "Megabonk", "Saves", "LocalDir", "config.json")
+MEGABONK_STEAM_APP_ID = "3405340"
+
+
+def _windows_game_config_path() -> str | None:
     user_profile = os.environ.get('USERPROFILE', '')
     if not user_profile:
         return None
-    return os.path.join(
-        user_profile,
-        "AppData",
-        "LocalLow",
-        "Ved",
-        "Megabonk",
-        "Saves",
-        "LocalDir",
-        "config.json",
-    )
+    return os.path.join(user_profile, "AppData", "LocalLow", GAME_CONFIG_RELATIVE_PATH)
+
+
+def linux_game_config_candidates() -> list[str]:
+    """Where the game's config can live on Linux, native build first.
+
+    The native build writes Unity's persistent data under
+    ``$XDG_CONFIG_HOME/unity3d`` (``~/.config/unity3d`` by default).  Under
+    Proton the Windows build writes the Windows path inside the game's
+    compatdata prefix, which sits in whichever Steam library holds the game;
+    every library listed in ``libraryfolders.vdf`` is checked.
+    """
+
+    home = os.path.expanduser("~")
+    config_home = os.environ.get("XDG_CONFIG_HOME") or os.path.join(home, ".config")
+    candidates = [os.path.join(config_home, "unity3d", GAME_CONFIG_RELATIVE_PATH)]
+
+    steam_roots = [
+        os.path.join(home, ".local", "share", "Steam"),
+        os.path.join(home, ".steam", "steam"),
+        os.path.join(home, ".var", "app", "com.valvesoftware.Steam", ".local", "share", "Steam"),
+    ]
+    libraries: list[str] = []
+    for root in steam_roots:
+        libraries.append(root)
+        vdf = os.path.join(root, "steamapps", "libraryfolders.vdf")
+        try:
+            with open(vdf, "r", encoding="utf-8", errors="replace") as handle:
+                for line in handle:
+                    parts = line.strip().split('"')
+                    if len(parts) >= 4 and parts[1] == "path":
+                        libraries.append(parts[3].replace("\\\\", "\\"))
+        except OSError:
+            continue
+    for library in dict.fromkeys(libraries):
+        candidates.append(
+            os.path.join(
+                library, "steamapps", "compatdata", MEGABONK_STEAM_APP_ID, "pfx", "drive_c",
+                "users", "steamuser", "AppData", "LocalLow", GAME_CONFIG_RELATIVE_PATH,
+            )
+        )
+    return candidates
+
+
+def get_game_config_path() -> str | None:
+    """The game's own config.json: Windows path, or the newest Linux candidate.
+
+    On Linux both the native build and a Proton install may have written one;
+    the most recently modified file is the one the game the user just played
+    wrote.  When none exists yet the native path is returned so the "launch the
+    game once" hint points somewhere sensible.
+    """
+
+    if os.name == "nt":
+        return _windows_game_config_path()
+    candidates = linux_game_config_candidates()
+    existing = [path for path in candidates if os.path.isfile(path)]
+    if not existing:
+        return candidates[0] if candidates else None
+    return max(existing, key=lambda path: os.path.getmtime(path))
 
 
 def load_game_config() -> dict | None:
