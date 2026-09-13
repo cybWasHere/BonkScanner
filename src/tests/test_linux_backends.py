@@ -312,3 +312,18 @@ class GameConfigPathTests(unittest.TestCase):
             with mock.patch.dict(os.environ, {"HOME": home, "XDG_CONFIG_HOME": ""}):
                 path = app_config.get_game_config_path()
                 self.assertTrue(path and path.startswith(os.path.join(home, ".config", "unity3d")))
+
+
+class ProcessNameVariantTests(unittest.TestCase):
+    def test_variants_include_the_native_linux_spelling(self) -> None:
+        from infra import process
+
+        variants = process.process_name_variants("Megabonk.exe")
+        self.assertIn("megabonk.exe", variants)
+        if os.name != "nt":
+            self.assertIn("megabonk.x86_64", variants)
+
+    def test_empty_name_has_no_variants(self) -> None:
+        from infra import process
+
+        self.assertEqual(frozenset(), process.process_name_variants(""))

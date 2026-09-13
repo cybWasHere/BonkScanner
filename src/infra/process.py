@@ -50,6 +50,28 @@ def memory_access_hint() -> str | None:
     return ptrace_permission_hint()
 
 
+def process_name_variants(process_name: str) -> frozenset[str]:
+    """Normalized names a process may carry for the configured executable.
+
+    On Windows that is the configured name alone.  On Linux the native build
+    of a Unity game is ``<stem>.x86_64`` while ``config.json`` ships the
+    Windows ``<stem>.exe``, so both spellings identify the game.
+    """
+
+    normalized = normalize_process_name(process_name)
+    if not normalized:
+        return frozenset()
+    variants = {normalized}
+    if os.name != "nt":
+        try:
+            from infra.memory.linux_process import process_name_candidates
+        except ImportError:
+            process_name_candidates = None
+        if process_name_candidates is not None:
+            variants.update(normalize_process_name(name) for name in process_name_candidates(normalized))
+    return frozenset(variant for variant in variants if variant)
+
+
 def process_image_name(process_id: int) -> str | None:
     """Linux: the executable basename of a pid from ``/proc``, lowercased."""
 

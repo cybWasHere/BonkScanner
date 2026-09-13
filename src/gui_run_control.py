@@ -406,11 +406,11 @@ class RunControl:
                 pass
 
     def _process_id_matches_name(self, process_id: int, process_name: str) -> bool:
-        normalized_process_name = process.normalize_process_name(process_name)
-        if not normalized_process_name:
+        accepted_names = process.process_name_variants(process_name)
+        if not accepted_names:
             return False
         image_name = self._process_image_name(process_id)
-        return bool(image_name and image_name == normalized_process_name)
+        return bool(image_name and image_name in accepted_names)
 
 
 
