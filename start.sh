@@ -54,7 +54,7 @@ Exec=$HERE/run.sh
 Path=$HERE
 Icon=$HERE/src/media/bonkscanner_icon2.png
 Terminal=false
-Categories=Game;Utility;
+Categories=Game;
 StartupWMClass=BonkScanner
 Keywords=Megabonk;reroll;overlay;
 DESKTOP
