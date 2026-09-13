@@ -363,13 +363,16 @@ class InGameOverlay:
     # -- geometry ----------------------------------------------------------
 
     def _pin_overlay_to_game_window(self) -> None:
-        """X11 only: make the overlay a transient of the game window.
+        """X11 only: keep the overlay a transient of the game window.
 
         Window managers stack a transient above its owner even when the owner
         is an active fullscreen window, which is the one place the overlay has
-        to be.  On Windows the top-most flag already does this; the X11 shim
-        exposes ``SetTransientFor`` and pywin32 does not, so this is a no-op
-        there.
+        to be.  Qt recreates the native window whenever the flags change
+        (entering or leaving layout mode), and the hint dies with the old
+        window, so this runs every tick the overlay is visible and re-applies
+        the hint when the native id or the game window changed.  On Windows
+        the top-most flag already does this; pywin32 has no ``SetTransientFor``
+        and the call is a no-op there.
         """
 
         pin = getattr(win32gui, "SetTransientFor", None)
@@ -377,9 +380,18 @@ class InGameOverlay:
         if pin is None or window is None or self._find_game_window is None:
             return
         try:
-            game_window = self._find_game_window(config.PROCESS_NAME)
-            if game_window:
-                pin(int(window.winId()), int(game_window))
+            native_id = int(window.winId())
+            game_window = int(self._find_game_window(config.PROCESS_NAME) or 0)
+        except Exception:
+            return
+        if not native_id or not game_window:
+            return
+        pinned = getattr(self, "_overlay_pin", None)
+        if pinned == (native_id, game_window):
+            return
+        try:
+            if pin(native_id, game_window):
+                self._overlay_pin = (native_id, game_window)
         except Exception:
             pass
 
@@ -905,19 +917,18 @@ class InGameOverlay:
             self.in_game_overlay_window.sync_geometry_to_target()
             if not self.in_game_overlay_window.isVisible():
                 self.in_game_overlay_window.show()
-                self._pin_overlay_to_game_window()
         else:
             is_game_active = self._is_game_window_active(config.PROCESS_NAME)
             if is_game_active:
                 self.in_game_overlay_window.sync_geometry_to_target()
                 if not self.in_game_overlay_window.isVisible():
                     self.in_game_overlay_window.show()
-                    self._pin_overlay_to_game_window()
             elif self.in_game_overlay_window.isVisible():
                 self.in_game_overlay_window.hide()
 
         if not self.in_game_overlay_window.isVisible():
             return False
+        self._pin_overlay_to_game_window()
 
         widgets = self.in_game_overlay_window.widgets
         # The two status plaques, before the runtime snapshot is even read.
