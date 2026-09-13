@@ -190,8 +190,14 @@ def GetClientRect(window_id: int) -> tuple[int, int, int, int] | None:
 
 @_guarded(None)
 def ClientToScreen(window_id: int, point: tuple[int, int]) -> tuple[int, int] | None:
-    translated = _window(window_id).translate_coords(_root(), int(point[0]), int(point[1]))
-    return -int(translated.x), -int(translated.y)
+    """A point in the window's client coordinates, on the root window.
+
+    ``dst.translate_coords(src, x, y)`` maps a point of ``src`` into ``dst``;
+    here the destination is the root, so the result is the root position.
+    """
+
+    translated = _root().translate_coords(_window(window_id), int(point[0]), int(point[1]))
+    return int(translated.x), int(translated.y)
 
 
 @_guarded("")
