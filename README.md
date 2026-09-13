@@ -11,6 +11,13 @@
 > KDE Plasma 6 (memory reads, rerolls, the in-game overlay and map markers).
 > No human has reviewed the code line by line. Read it before you trust it,
 > and expect rough edges on setups other than the one it was built on.
+>
+> **Thank you, [Aluiel](https://github.com/ALuiell).** Everything this tool
+> does, from the memory reading to the overlays and the Twitch bot, is his
+> work; this fork only swaps the operating-system layer underneath it. If
+> BonkScanner saves you time, please support the person who built it:
+> [Patreon](https://www.patreon.com/cw/ALuiel) or a
+> [crypto donation](https://aluiell.github.io/BonkScanner/).
 
 **BonkScanner** is a desktop tool for Megabonk reroll automation, live run inspection, saved-run review, OBS overlays, and Twitch chat integration. This branch runs it natively on Linux.
 It observes the running game locally, evaluates each reset in real time, and can keep rerolling until a selected template or score tier is found.
