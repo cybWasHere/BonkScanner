@@ -386,12 +386,14 @@ class InGameOverlay:
             return
         if not native_id or not game_window:
             return
-        pinned = getattr(self, "_overlay_pin", None)
-        if pinned == (native_id, game_window):
-            return
+        # Qt makes a parentless tool window transient for its own client
+        # leader again on every show, so the hint on the live window is what
+        # decides, not what was last requested.
+        read_hint = getattr(win32gui, "GetTransientFor", None)
         try:
-            if pin(native_id, game_window):
-                self._overlay_pin = (native_id, game_window)
+            if callable(read_hint) and int(read_hint(native_id) or 0) == game_window:
+                return
+            pin(native_id, game_window)
         except Exception:
             pass
 

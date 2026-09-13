@@ -330,6 +330,16 @@ def SetTransientFor(window_id: int, owner_id: int) -> bool:
     return True
 
 
+@_guarded(0)
+def GetTransientFor(window_id: int) -> int:
+    """The window ``window_id`` is transient for, or 0."""
+
+    value = _property(_window(window_id), "WM_TRANSIENT_FOR", Xatom.WINDOW)
+    if value is None or len(value) == 0:
+        return 0
+    return int(value[0])
+
+
 def is_available() -> bool:
     return xdisplay is not None and bool(os.environ.get("DISPLAY"))
 
@@ -347,6 +357,7 @@ __all__ = [
     "GetWindowLong",
     "GetWindowRect",
     "GetWindowText",
+    "GetTransientFor",
     "GetWindowThreadProcessId",
     "IsIconic",
     "IsWindowVisible",
