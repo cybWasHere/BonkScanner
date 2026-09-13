@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Linux counterpart of start.bat: create .venv, install dependencies, run BonkScanner.
-# Re-run any time; it only installs what is missing. Pass --no-run to just set up.
+# Re-run any time; it only installs what is missing. Pass --no-run to just set up,
+# --no-shortcut to skip the application-menu entry.
 set -euo pipefail
 cd "$(dirname "$0")"
 
@@ -37,7 +38,31 @@ if [ ! -w /dev/uinput ]; then
   echo "Your user cannot write /dev/uinput. The reset key needs that; see README.md (Linux)."
 fi
 
-if [ "${1:-}" = "--no-run" ]; then
+# Application-menu shortcut (~/.local/share/applications), pointing at this
+# checkout's run.sh. Re-created on every run so a moved checkout stays launchable.
+# Skip with --no-shortcut.
+if [ "${1:-}" != "--no-shortcut" ] && [ "${2:-}" != "--no-shortcut" ]; then
+  HERE="$(pwd)"
+  APPS="${XDG_DATA_HOME:-$HOME/.local/share}/applications"
+  mkdir -p "$APPS"
+  cat > "$APPS/bonkscanner.desktop" <<DESKTOP
+[Desktop Entry]
+Type=Application
+Name=BonkScanner
+Comment=Megabonk map reroll scanner, live stats and overlays (unofficial Linux port)
+Exec=$HERE/run.sh
+Path=$HERE
+Icon=$HERE/src/media/bonkscanner_icon2.png
+Terminal=false
+Categories=Game;Utility;
+StartupWMClass=BonkScanner
+Keywords=Megabonk;reroll;overlay;
+DESKTOP
+  command -v update-desktop-database >/dev/null && update-desktop-database -q "$APPS" || true
+  echo "Application-menu shortcut installed: $APPS/bonkscanner.desktop"
+fi
+
+if [ "${1:-}" = "--no-run" ] || [ "${2:-}" = "--no-run" ]; then
   exit 0
 fi
-exec .venv/bin/python3 src/main.py "$@"
+exec ./run.sh

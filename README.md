@@ -58,8 +58,9 @@ through X11, and the Twitch token lives in the desktop keyring.
    sudo udevadm control --reload && sudo udevadm trigger --subsystem-match=input
    ```
 
-3. Start the game, then `./start.sh` (or `.venv/bin/python3 src/main.py`).
-   Use `./run_tests.sh` for the unit tests.
+3. Start the game, then `./start.sh`. It also puts a **BonkScanner** entry in
+   your application menu that launches this checkout (`./run.sh` does the
+   same from a terminal). Use `./run_tests.sh` for the unit tests.
 
 Notes for Linux:
 
