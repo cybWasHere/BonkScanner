@@ -1,5 +1,17 @@
 # BonkScanner
 
+> **Unofficial Linux port.** This fork adds native Linux support on the
+> `linux-native` branch. It is not maintained, endorsed, or published by the
+> BonkScanner project; the official app and its releases are at
+> [ALuiell/BonkScanner](https://github.com/ALuiell/BonkScanner).
+>
+> **How it was made:** the port is vibecoded. The Linux backends, the offset
+> table and the docs were written by Claude, an AI coding agent, directed by
+> the fork owner, who ran and verified each step against the live game on
+> KDE Plasma 6 (memory reads, rerolls, the in-game overlay and map markers).
+> No human has reviewed the code line by line. Read it before you trust it,
+> and expect rough edges on setups other than the one it was built on.
+
 **BonkScanner** is a Windows desktop tool for Megabonk reroll automation, live run inspection, saved-run review, OBS overlays, and Twitch chat integration.
 It observes the running game locally, evaluates each reset in real time, and can keep rerolling until a selected template or score tier is found.
 
