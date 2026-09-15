@@ -37,6 +37,8 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git remote add upstream https://github.com/ALuiell/BonkScanner.git
+          # README.md is the fork's own (.gitattributes: merge=ours); keep it on merge.
+          git config merge.ours.driver true
           git fetch --quiet upstream main
           new=$(git rev-list --count HEAD..upstream/main)
           echo "new=$new" >> "$GITHUB_OUTPUT"
