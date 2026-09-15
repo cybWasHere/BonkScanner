@@ -38,10 +38,77 @@ UDEV_RULE_GROUP='SUBSYSTEM=="input", KERNEL=="event*", GROUP="input", MODE="0660
 KERNEL=="uinput", SUBSYSTEM=="misc", GROUP="input", MODE="0660"'
 SUDO_HINT="If your account has no password yet (Steam Deck), set one with passwd first."
 
-say()  { printf '==> %s\n' "$*"; }
+# Colours and the spinner only on a real terminal; NO_COLOR or a pipe gets
+# plain lines. Braille spinner and check marks only in a UTF-8 locale.
+if [ -t 1 ] && [ -t 2 ] && [ -z "${NO_COLOR:-}" ] && [ "${TERM:-dumb}" != dumb ]; then
+  FANCY=1
+  BOLD=$'\e[1m' DIM=$'\e[2m' RESET=$'\e[0m'
+  CYAN=$'\e[36m' GREEN=$'\e[32m' YELLOW=$'\e[33m' RED=$'\e[31m'
+else
+  FANCY=0 BOLD="" DIM="" RESET="" CYAN="" GREEN="" YELLOW="" RED=""
+fi
+case ${LC_ALL:-${LC_CTYPE:-${LANG:-}}} in
+  *[Uu][Tt][Ff]-8*|*[Uu][Tt][Ff]8*) OK_MARK=✓ BAD_MARK=✗ SPIN=(⠋ ⠙ ⠹ ⠸ ⠼ ⠴ ⠦ ⠧ ⠇ ⠏) ;;
+  *) OK_MARK=+ BAD_MARK=x SPIN=('|' / - "\\") ;;
+esac
+
+say()  { printf '%s==>%s %s%s%s\n' "$CYAN" "$RESET" "$BOLD" "$*" "$RESET"; }
 note() { printf '    %s\n' "$*"; }
-warn() { printf 'Warning: %s\n' "$*" >&2; }
-die()  { printf 'Error: %s\n' "$*" >&2; exit 1; }
+warn() { printf '  %s!%s %s\n' "$YELLOW" "$RESET" "$*" >&2; }
+die()  { printf '%s%s Error:%s %s\n' "$RED" "$BAD_MARK" "$RESET" "$*" >&2; exit 1; }
+
+# One line of the final checklist: row ok|todo|fail|skip LABEL [DETAIL]
+row() {
+  local mark colour
+  case $1 in
+    ok)   mark=$OK_MARK colour=$GREEN ;;
+    todo) mark='!' colour=$YELLOW ;;
+    fail) mark=$BAD_MARK colour=$RED ;;
+    *)    mark='-' colour=$DIM ;;
+  esac
+  printf '  %s%s%s %-24s%s%s%s\n' "$colour" "$mark" "$RESET" "$2" "$DIM" "${3:-}" "$RESET"
+}
+
+# Run a slow, quiet command behind a spinner with elapsed time, and show its
+# output only if it fails. Without a terminal it just announces the step. Never
+# use it for sudo: the spinner would draw over the password prompt.
+run_step() {
+  local label=$1 log pid rc=0 i=0 start=$SECONDS
+  shift
+  if [ "$FANCY" != 1 ]; then
+    say "$label"
+    "$@"
+    return
+  fi
+  log=$(mktemp)
+  "$@" >"$log" 2>&1 </dev/null &
+  pid=$!
+  # shellcheck disable=SC2064  # expand pid and log now
+  trap "kill $pid 2>/dev/null; printf '\r\e[K\e[?25h  Interrupted.\n' >&2; rm -f '$log'; exit 130" INT TERM
+  printf '\e[?25l'
+  while kill -0 "$pid" 2>/dev/null; do
+    printf '\r  %s%s%s %s %s%ds%s' "$CYAN" "${SPIN[i++ % ${#SPIN[@]}]}" "$RESET" "$label" "$DIM" $((SECONDS - start)) "$RESET"
+    sleep 0.1
+  done
+  wait "$pid" || rc=$?
+  trap - INT TERM
+  printf '\r\e[K\e[?25h'
+  if [ "$rc" = 0 ]; then
+    printf '  %s%s%s %s %s%ds%s\n' "$GREEN" "$OK_MARK" "$RESET" "$label" "$DIM" $((SECONDS - start)) "$RESET"
+  else
+    printf '  %s%s%s %s\n' "$RED" "$BAD_MARK" "$RESET" "$label" >&2
+    sed 's/^/    /' "$log" >&2
+  fi
+  rm -f "$log"
+  return "$rc"
+}
+
+banner() {
+  [ "${BONKSCANNER_BANNER:-}" != shown ] || return 0
+  printf '\n  %s%sBonkScanner%s  %sLinux installer%s\n\n' "$BOLD" "$CYAN" "$RESET" "$DIM" "$RESET"
+  # The checkout's own copy continues after exec; it should not repeat this.
+  export BONKSCANNER_BANNER=shown
+}
 
 usage() {
   cat <<'USAGE'
@@ -50,7 +117,7 @@ Usage: install.sh [--dir DIR] [--no-shortcut] [--uninstall]
   --no-shortcut   skip the menu entry and the bonkscanner command
   --uninstall     remove BonkScanner (asks before deleting the install folder)
 Environment: PYTHON=/usr/bin/python3.12 builds .venv on that interpreter (3.11+)
-instead of downloading a private Python.
+instead of downloading a private Python. NO_COLOR=1 prints plain output.
 USAGE
 }
 
@@ -135,15 +202,14 @@ existing_install() {
 bootstrap() {
   ensure_prereqs
   if [ -d "$DIR/.git" ]; then
-    say "Updating $DIR"
-    git -C "$DIR" pull --ff-only </dev/null ||
+    run_step "Updating BonkScanner" git -C "$DIR" pull --ff-only ||
       warn "git pull failed (local changes or a diverged branch?); setting up the checkout as it is."
   elif [ -e "$DIR" ] && [ -n "$(ls -A "$DIR" 2>/dev/null)" ]; then
     die "$DIR exists but is not a git checkout. Move it away or pass --dir."
   else
-    say "Downloading BonkScanner to $DIR"
     mkdir -p "$(dirname "$DIR")"
-    git clone --quiet --branch "$BRANCH" "$REPO_URL" "$DIR" </dev/null
+    run_step "Downloading BonkScanner" git clone --quiet --branch "$BRANCH" "$REPO_URL" "$DIR" ||
+      die "Could not download BonkScanner (see above). Check your connection and run this again."
   fi
   [ -f "$DIR/install.sh" ] || die "$DIR has no install.sh; update it (git pull) and run this again."
   # Continue with the checkout's own copy, so setup always matches the code.
@@ -167,6 +233,21 @@ private_python() {
   return 1
 }
 
+# Runs behind the spinner: everything it prints is shown only on failure.
+download_python() {
+  local tmp=$1 asset=${UV_URL##*/} uv
+  if ! { fetch "$UV_URL" "$tmp/$asset" && fetch "$UV_URL.sha256" "$tmp/$asset.sha256"; }; then
+    echo "Could not download uv from GitHub, which fetches Python."
+    return 1
+  fi
+  (cd "$tmp" && sha256sum --quiet -c "$asset.sha256") || { echo "The uv download is corrupt."; return 1; }
+  tar -xzf "$tmp/$asset" -C "$tmp" || return 1
+  uv=$(find "$tmp" -type f -name uv -print -quit)
+  [ -n "$uv" ] || { echo "The uv download did not contain uv."; return 1; }
+  UV_NO_CONFIG=1 UV_CACHE_DIR=$tmp/cache UV_PYTHON_INSTALL_DIR=$PWD/.python \
+    "$uv" python install --quiet --no-bin --install-dir "$PWD/.python" "$PY_VERSION"
+}
+
 ensure_python() {
   if [ -n "$PYTHON" ]; then
     "$PYTHON" -c 'import sys, venv, ensurepip; sys.exit(sys.version_info < (3, 11))' 2>/dev/null ||
@@ -175,48 +256,46 @@ ensure_python() {
   fi
   if PYTHON=$(private_python); then return 0; fi
 
-  say "Downloading a private Python $PY_VERSION for BonkScanner (the system Python is not touched)"
-  local tmp uv asset=${UV_URL##*/}
+  local tmp
   tmp=$(mktemp -d)
   # shellcheck disable=SC2064  # expand $tmp now
   trap "rm -rf '$tmp'" EXIT
-  { fetch "$UV_URL" "$tmp/$asset" && fetch "$UV_URL.sha256" "$tmp/$asset.sha256"; } ||
-    die "Could not download uv from GitHub, which fetches Python. Check your connection and run this again."
-  (cd "$tmp" && sha256sum --quiet -c "$asset.sha256") || die "The uv download is corrupt; run this again."
-  tar -xzf "$tmp/$asset" -C "$tmp"
-  uv=$(find "$tmp" -type f -name uv -print -quit)
-  [ -n "$uv" ] || die "The uv download did not contain uv."
-  UV_NO_CONFIG=1 UV_CACHE_DIR=$tmp/cache UV_PYTHON_INSTALL_DIR=$PWD/.python \
-    "$uv" python install --quiet --no-bin --install-dir "$PWD/.python" "$PY_VERSION" </dev/null ||
-    die "uv could not install Python $PY_VERSION (see above)."
+  run_step "Downloading Python $PY_VERSION" download_python "$tmp" ||
+    die "Could not install Python $PY_VERSION (see above). Check your connection and run this again."
   rm -rf "$tmp"
   trap - EXIT
   PYTHON=$(private_python) || die "Python $PY_VERSION was installed to $PWD/.python but does not run."
 }
 
+# Runs behind the spinner.
+install_packages() {
+  local pip=(.venv/bin/python3 -m pip --disable-pip-version-check)
+  "${pip[@]}" install --quiet --upgrade pip || return 1
+  # evdev now comes as prebuilt wheels (evdev-binary), so no compiler is needed.
+  # Both install the same module: drop a source-built evdev from older setups.
+  if "${pip[@]}" show evdev >/dev/null 2>&1; then
+    "${pip[@]}" uninstall --quiet -y evdev || return 1
+  fi
+  "${pip[@]}" install --quiet -r src/requirements.txt
+}
+
 build_venv() {
-  local marker=.venv/bonkscanner-python
+  local marker=.venv/bonkscanner-python fresh=0 label
   # Rebuild when the venv was made by another interpreter or can no longer start.
   if [ -e .venv ] && { [ "$(cat "$marker" 2>/dev/null)" != "$PYTHON" ] || ! .venv/bin/python3 -c '' 2>/dev/null; }; then
-    note "Rebuilding .venv on $PYTHON"
     rm -rf .venv
   fi
   if [ ! -e .venv ]; then
     # --copies gives the venv a real interpreter binary, so the ptrace capability
     # can be attached to it alone.
-    "$PYTHON" -m venv --copies .venv
+    run_step "Creating the Python environment" "$PYTHON" -m venv --copies .venv ||
+      die "Could not create .venv (see above)."
     printf '%s\n' "$PYTHON" > "$marker"
+    fresh=1
   fi
-  local pip=(.venv/bin/python3 -m pip --disable-pip-version-check)
-  "${pip[@]}" install --quiet --upgrade pip </dev/null
-  # evdev now comes as prebuilt wheels (evdev-binary), so no compiler is needed.
-  # Both install the same module: drop a source-built evdev from older setups.
-  if "${pip[@]}" show evdev >/dev/null 2>&1; then
-    "${pip[@]}" uninstall --quiet -y evdev </dev/null
-  fi
-  say "Installing Python packages (Qt alone is about 300 MB the first time)"
-  "${pip[@]}" install --quiet -r src/requirements.txt </dev/null ||
-    die "pip could not install the requirements (see above)."
+  label="Checking Python packages"
+  if [ "$fresh" = 1 ]; then label="Installing Python packages (Qt is ~300 MB)"; fi
+  run_step "$label" install_packages || die "pip could not install the requirements (see above)."
 }
 
 ptrace_scope() { cat /proc/sys/kernel/yama/ptrace_scope 2>/dev/null || echo 0; }
@@ -253,7 +332,6 @@ grant_permissions() {
       if ! has_ptrace_cap; then
         if setcap=$(find_tool setcap); then need_cap=1; else warn "setcap not found; skipping the memory-read permission."; fi
       fi ;;
-    3) warn "kernel.yama.ptrace_scope is 3: no program may read another's memory, so the scanner cannot see the game. Set it to 1 and reboot." ;;
   esac
   if ! input_access_ok; then
     udev_rule_current || need_udev=1
@@ -304,7 +382,6 @@ DESKTOP
 
 setup() {
   cd "$DIR"
-  say "Setting up $DIR"
   ensure_prereqs
   exclude_private_python
   ensure_python
@@ -312,52 +389,70 @@ setup() {
   grant_permissions
   if [ "$SHORTCUT" = 1 ]; then install_shortcut; fi
 
-  local problems=0
+  local problems=0 launch
+  echo
+  row ok "Python $("$PYTHON" -c 'import platform; print(platform.python_version())')"
+  row ok "Python packages"
   case $(ptrace_scope) in
-    1|2) if ! has_ptrace_cap; then warn "No memory-read permission yet: the scanner cannot see the game. Run this again to grant it."; problems=1; fi ;;
-    3) problems=1 ;;
+    1|2)
+      if has_ptrace_cap; then row ok "Memory access"
+      else row fail "Memory access" "not granted: run the installer again"; problems=1
+      fi ;;
+    3) row fail "Memory access" "blocked: kernel.yama.ptrace_scope is 3 (set 1, reboot)"; problems=1 ;;
+    *) row ok "Memory access" ;;
   esac
-  if ! input_access_ok; then
-    problems=1
-    if input_setup_done; then
-      warn "Hotkeys and the reset key start working after you log out and back in."
-    else
-      warn "No keyboard-device access yet: hotkeys and the reset key will not work. Run this again to grant it."
-    fi
-  fi
-
-  if [ "$problems" = 0 ]; then say "BonkScanner is ready."; else say "BonkScanner is installed, with the warnings above."; fi
-  if [ "$SHORTCUT" = 1 ]; then
-    if [ "$(command -v bonkscanner 2>/dev/null)" = "$BIN_LINK" ]; then
-      note "Start Megabonk, then open BonkScanner from your application menu or run: bonkscanner"
-    else
-      note "Start Megabonk, then open BonkScanner from your application menu or run: $DIR/run.sh"
-    fi
+  if input_access_ok; then
+    row ok "Hotkeys and reset key"
+  elif input_setup_done; then
+    row todo "Hotkeys and reset key" "log out and back in to finish"; problems=1
   else
-    note "Start Megabonk, then run: $DIR/run.sh"
+    row fail "Hotkeys and reset key" "not granted: run the installer again"; problems=1
   fi
-  note "To update, run the install command again. Settings and recordings live in $DIR"
+  launch="$DIR/run.sh"
+  if [ "$SHORTCUT" = 1 ]; then
+    if [ "$(command -v bonkscanner 2>/dev/null)" = "$BIN_LINK" ]; then launch=bonkscanner; fi
+    row ok "Menu entry and command" "$launch"
+  else
+    row skip "Menu entry and command" "skipped (--no-shortcut)"
+  fi
+  echo
+
+  if [ "$problems" = 0 ]; then
+    printf '  %s%sBonkScanner is ready.%s\n' "$BOLD" "$GREEN" "$RESET"
+  else
+    printf '  %s%sBonkScanner is installed; finish the marked steps.%s\n' "$BOLD" "$YELLOW" "$RESET"
+  fi
+  if [ "$SHORTCUT" = 1 ]; then
+    note "Start Megabonk, then open BonkScanner from your application menu or run: $launch"
+  else
+    note "Start Megabonk, then run: $launch"
+  fi
+  note "Update: run the install command again.  Settings and recordings: $DIR"
+  echo
 }
 
 uninstall() {
   say "Uninstalling BonkScanner"
-  if [ -f "$DESKTOP_FILE" ]; then rm -f "$DESKTOP_FILE"; note "Removed the menu entry."; fi
-  if [ -L "$BIN_LINK" ] && [ "$(readlink "$BIN_LINK")" = "$DIR/run.sh" ]; then rm -f "$BIN_LINK"; note "Removed $BIN_LINK."; fi
+  if [ -f "$DESKTOP_FILE" ]; then rm -f "$DESKTOP_FILE"; row ok "Removed the menu entry"; fi
+  if [ -L "$BIN_LINK" ] && [ "$(readlink "$BIN_LINK")" = "$DIR/run.sh" ]; then rm -f "$BIN_LINK"; row ok "Removed $BIN_LINK"; fi
   if [ -f "$UDEV_RULE" ]; then
     note "Removing $UDEV_RULE (sudo)"
     # shellcheck disable=SC2016
-    root sh -c 'rm -f "$1" && udevadm control --reload' sh "$UDEV_RULE" ||
+    if root sh -c 'rm -f "$1" && udevadm control --reload' sh "$UDEV_RULE"; then
+      row ok "Removed the udev rule"
+    else
       warn "Could not remove $UDEV_RULE."
+    fi
   fi
   if [ -f "$DIR/src/main.py" ] && [ -d "$DIR/.git" ]; then
     local answer=n
     if (: </dev/tty) 2>/dev/null; then
-      printf 'Also delete %s? It holds your config.json and stats recordings. [y/N] ' "$DIR" >/dev/tty
+      printf '  Also delete %s? It holds your config.json and stats recordings. [y/N] ' "$DIR" >/dev/tty
       read -r answer </dev/tty || answer=n
     fi
     case $answer in
-      [yY]*) rm -rf "$DIR"; note "Deleted $DIR." ;;
-      *) note "Kept $DIR (delete it yourself to remove everything)." ;;
+      [yY]*) rm -rf "$DIR"; row ok "Deleted $DIR" ;;
+      *) row skip "Kept $DIR" "delete it yourself to remove everything" ;;
     esac
   fi
 }
@@ -385,6 +480,7 @@ main() {
   if [ "$action" = install ] && [ "$(uname -m)" != x86_64 ]; then
     die "BonkScanner and Megabonk need an x86_64 PC; this machine is $(uname -m)."
   fi
+  banner
 
   self=${BASH_SOURCE[0]:-}
   if [ -n "$self" ] && [ -f "$self" ]; then here=$(cd "$(dirname "$self")" && pwd); fi
