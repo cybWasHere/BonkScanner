@@ -7,6 +7,6 @@ pymem==1.14.0; sys_platform == "win32"
 keyboard==0.13.5; sys_platform == "win32"
 pywin32>=306; sys_platform == "win32"
 # Linux: evdev/uinput hotkeys, X11 window queries, Secret Service / KWallet credentials
-evdev>=1.7.0; sys_platform == "linux"
+evdev-binary>=2.0.0; sys_platform == "linux"
 python-xlib>=0.33; sys_platform == "linux"
 keyring>=25.0; sys_platform == "linux"
