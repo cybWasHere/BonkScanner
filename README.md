@@ -30,37 +30,44 @@ glue differs from the Windows app: process memory is read through `/proc`,
 hotkeys and the reset key go through `evdev`/`uinput`, windows are found
 through X11, and the Twitch token lives in the desktop keyring.
 
-1. Install Python 3.12+, `git`, and a C compiler with the Python headers
-   (`python3-dev` and `gcc` on Debian/Ubuntu, `python3-devel` and `gcc` on
-   Fedora; Arch has them with `base-devel`), which the `evdev` package is
-   built with. Then:
+Paste this into a terminal:
 
-   ```bash
-   git clone https://github.com/ALuiell/BonkScanner.git
-   cd BonkScanner
-   ./start.sh
-   ```
+```bash
+curl -fsSL https://raw.githubusercontent.com/cybWasHere/BonkScanner/linux-native/install.sh | bash
+```
 
-   `start.sh` creates `.venv`, installs the Linux requirements, and asks for
-   `sudo` once to grant the venv's Python `CAP_SYS_PTRACE` (reading another
-   process's memory is otherwise refused by the kernel's default
-   `ptrace_scope`). Re-run it any time; it only installs what is missing.
+Then start Megabonk and open **BonkScanner** from your application menu (or
+run `bonkscanner`). Run the same command again to update. It asks for your
+password up to twice: once if system packages are missing, once for the
+permissions below.
 
-2. Let your user read input devices and write `/dev/uinput`, which global
-   hotkeys and the reset key need. Either add yourself to the `input` group and
-   log in again, or install a udev rule that grants the active seat access:
+What the installer does ([`install.sh`](install.sh), read it first if you like):
 
-   ```bash
-   sudo tee /etc/udev/rules.d/71-bonkscanner-input.rules <<'RULES'
-   SUBSYSTEM=="input", KERNEL=="event*", TAG+="uaccess"
-   KERNEL=="uinput", SUBSYSTEM=="misc", TAG+="uaccess"
-   RULES
-   sudo udevadm control --reload && sudo udevadm trigger --subsystem-match=input
-   ```
+- installs whatever is missing of `git`, `curl`, `setcap` and the libraries Qt
+  needs (pacman, apt, dnf or zypper);
+- clones this fork to `~/.local/share/bonkscanner`, or pulls if it is already
+  installed;
+- gives it a private Python 3.13 (a [uv](https://github.com/astral-sh/uv)
+  standalone build in `.python/`) and builds `.venv` on it, so your
+  distribution's Python version does not matter, its upgrades cannot break
+  BonkScanner, and no compiler is needed;
+- grants the venv's Python `CAP_SYS_PTRACE`, because reading the game's memory
+  is otherwise refused by the kernel's default `ptrace_scope`;
+- installs `/etc/udev/rules.d/71-bonkscanner-input.rules`, which lets your login
+  session read keyboards and write `/dev/uinput` for global hotkeys and the
+  reset key (skipped if you already have that access; on systems without
+  systemd-logind or elogind it uses the `input` group instead and adds you to
+  it);
+- adds the application-menu entry and a `bonkscanner` command in `~/.local/bin`.
 
-3. Start the game, then `./start.sh`. It also puts a **BonkScanner** entry in
-   your application menu that launches this checkout (`./run.sh` does the
-   same from a terminal). Use `./run_tests.sh` for the unit tests.
+Options go after `bash -s --`: `--dir DIR` installs somewhere else,
+`--no-shortcut` skips the menu entry, and `--uninstall` removes the menu entry,
+command and udev rule, then asks before deleting the install folder (it holds
+`config.json` and your recordings). Set `PYTHON=/usr/bin/python3.12` (3.11 or
+newer) to build on a Python of your own instead of the private one.
+
+From a git checkout, `./install.sh` sets up that checkout in place and
+`./start.sh` does the same and launches it. `./run_tests.sh` runs the unit tests.
 
 Notes for Linux:
 
@@ -387,7 +394,8 @@ Notes:
 
 ## Updates
 
-A source checkout updates with `git pull`. The in-app updater belongs to the
+Run the install command again: it pulls and reinstalls the dependencies (from a
+checkout, `git pull` then `./install.sh`). The in-app updater belongs to the
 upstream packaged Windows build: it checks the `ALuiell/BonkScanner` releases and
 downloads a `.exe`, so on Linux it does nothing useful and can be ignored.
 
