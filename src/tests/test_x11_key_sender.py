@@ -132,6 +132,60 @@ class X11WindowKeySenderTests(unittest.TestCase):
         self.assertEqual(connection.display().sent, [])
 
 
+class X11WindowKeySenderHoldTests(unittest.TestCase):
+    def make_sender(self, *, focus_id: int, on_sleep=None):
+        connection = FakeConnection(focus_id)
+        sleeps: list[float] = []
+
+        def sleep(seconds: float) -> None:
+            sleeps.append(seconds)
+            if on_sleep is not None:
+                on_sleep(connection, sleeps)
+
+        sender = x11_key_sender.X11WindowKeySender(
+            lambda: GAME_WINDOW, focus_settle_seconds=0.4, sleep=sleep, connection=connection,
+        )
+        return sender, connection, sleeps
+
+    def test_uninterrupted_hold_is_one_press_for_the_full_duration(self) -> None:
+        sender, connection, sleeps = self.make_sender(focus_id=0x200000)
+
+        sender.hold("r", 0.2)
+
+        self.assertEqual(
+            event_kinds(connection),
+            [xevent.FocusIn, xevent.KeyPress, xevent.KeyRelease, xevent.FocusOut],
+        )
+        self.assertAlmostEqual(sum(sleeps) - 0.4, 0.2)
+
+    def test_alt_tabbing_away_mid_hold_restarts_the_hold_with_fake_focus(self) -> None:
+        def lose_focus_once(connection, sleeps):
+            if len(sleeps) == 2:  # second poll slice of the first attempt
+                connection.display().focus_id = 0x200000
+
+        sender, connection, _ = self.make_sender(focus_id=GAME_WINDOW, on_sleep=lose_focus_once)
+
+        sender.hold("r", 0.2)
+
+        self.assertEqual(
+            event_kinds(connection),
+            [
+                xevent.KeyPress, xevent.KeyRelease,                                  # interrupted, really focused
+                xevent.FocusIn, xevent.KeyPress, xevent.KeyRelease, xevent.FocusOut,  # redone unfocused
+            ],
+        )
+
+    def test_focus_that_never_settles_is_an_error_not_a_silent_miss(self) -> None:
+        def flip_focus(connection, sleeps):
+            display = connection.display()
+            display.focus_id = 0x200000 if display.focus_id == GAME_WINDOW else GAME_WINDOW
+
+        sender, _, _ = self.make_sender(focus_id=GAME_WINDOW, on_sleep=flip_focus)
+
+        with self.assertRaises(x11_key_sender.X11KeySendError):
+            sender.hold("r", 0.2)
+
+
 class RecordingKeyboard:
     def __init__(self, name: str, log: list) -> None:
         self._name = name
@@ -144,31 +198,66 @@ class RecordingKeyboard:
         self._log.append((self._name, "release", key))
 
 
-class FocusAwareKeyboardTests(unittest.TestCase):
-    def test_routes_by_focus_and_release_follows_its_press(self) -> None:
+class RecordingSender(RecordingKeyboard):
+    def hold(self, key, seconds) -> None:
+        self._log.append((self._name, "hold", key, seconds))
+
+
+class GameKeyboardTests(unittest.TestCase):
+    def test_everything_goes_to_the_window_sender_while_enabled(self) -> None:
         log: list = []
-        active = {"value": False}
-        keyboard = x11_key_sender.FocusAwareKeyboard(
-            RecordingKeyboard("uinput", log),
-            RecordingKeyboard("x11", log),
-            is_game_window_active=lambda: active["value"],
+        keyboard = x11_key_sender.GameKeyboard(
+            RecordingSender("x11", log), RecordingKeyboard("uinput", log), enabled=lambda: True,
         )
 
-        keyboard.press("r")
-        active["value"] = True  # focus arrives mid-hold
-        keyboard.release("r")
-        keyboard.press("r")
-        keyboard.release("r")
+        keyboard.hold("r", 1.05)
+        keyboard.press("esc")
+        keyboard.release("esc")
 
         self.assertEqual(
-            log,
-            [
-                ("x11", "press", "r"),
-                ("x11", "release", "r"),
-                ("uinput", "press", "r"),
-                ("uinput", "release", "r"),
-            ],
+            log, [("x11", "hold", "r", 1.05), ("x11", "press", "esc"), ("x11", "release", "esc")],
         )
+
+    def test_disabled_falls_back_to_uinput_and_release_follows_its_press(self) -> None:
+        log: list = []
+        enabled = {"value": False}
+        keyboard = x11_key_sender.GameKeyboard(
+            RecordingSender("x11", log), RecordingKeyboard("uinput", log), enabled=lambda: enabled["value"],
+        )
+
+        keyboard.press("r")
+        enabled["value"] = True  # setting flipped mid-hold
+        keyboard.release("r")
+
+        self.assertEqual(log, [("uinput", "press", "r"), ("uinput", "release", "r")])
+
+
+class KeyboardRunControlProviderHoldTests(unittest.TestCase):
+    def test_restart_run_uses_the_backend_hold_when_there_is_one(self) -> None:
+        from infra.keyboard_run_control import KeyboardRunControlProvider
+
+        log: list = []
+        provider = KeyboardRunControlProvider(
+            RecordingSender("x11", log), reset_hotkey="r", reset_hold_duration=1.05,
+            sleep=lambda seconds: log.append(("slept", seconds)),
+        )
+
+        provider.restart_run()
+
+        self.assertEqual(log, [("x11", "hold", "r", 1.05)])
+
+    def test_restart_run_still_presses_and_releases_a_plain_backend(self) -> None:
+        from infra.keyboard_run_control import KeyboardRunControlProvider
+
+        log: list = []
+        provider = KeyboardRunControlProvider(
+            RecordingKeyboard("uinput", log), reset_hotkey="r", reset_hold_duration=1.05,
+            sleep=lambda seconds: log.append(("slept", seconds)),
+        )
+
+        provider.restart_run()
+
+        self.assertEqual(log, [("uinput", "press", "r"), ("slept", 1.05), ("uinput", "release", "r")])
 
 
 class RunControlUnfocusedGateTests(unittest.TestCase):

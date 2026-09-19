@@ -39,6 +39,12 @@ class KeyboardRunControlProvider:
             raise RunControlError("Keyboard restart control is unavailable; install the 'keyboard' dependency.")
 
         reset_hotkey = self._reset_hotkey()
+        # A backend that can hold a key itself gets to: the Linux window sender
+        # restarts the hold when focus changes underneath it.
+        hold = getattr(self.keyboard, "hold", None)
+        if callable(hold):
+            hold(reset_hotkey, self._reset_hold_duration())
+            return
         self.keyboard.press(reset_hotkey)
         try:
             self._sleep(self._reset_hold_duration())

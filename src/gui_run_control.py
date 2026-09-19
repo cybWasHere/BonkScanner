@@ -110,9 +110,10 @@ class RunControl:
     def _build_game_keyboard(self):
         """The keyboard the game is driven with.
 
-        On Linux that is a router: uinput while the game has focus, and key
-        events sent straight to the game's X11 window while it does not, which
-        is what lets auto-reroll carry on in the background.  Everywhere else,
+        On Linux, key events are sent straight to the game's X11 window rather
+        than through uinput, so they reach it focused or not -- which is what
+        lets auto-reroll carry on in the background, and what keeps a reset
+        that is alt-tabbed away from out of the next window.  Everywhere else,
         and whenever X11 is unusable, it is the plain keyboard backend.
         """
         if keyboard is None or os.name == "nt":
@@ -123,19 +124,23 @@ class RunControl:
             return keyboard
         if not x11_key_sender.is_available():
             return keyboard
-        return x11_key_sender.FocusAwareKeyboard(
-            keyboard,
+        return x11_key_sender.GameKeyboard(
             x11_key_sender.X11WindowKeySender(
                 lambda: self.find_game_window(config.PROCESS_NAME),
             ),
-            is_game_window_active=lambda: self.is_game_window_active(config.PROCESS_NAME),
+            keyboard,
+            enabled=self._reset_when_unfocused_enabled,
         )
 
+    @staticmethod
+    def _reset_when_unfocused_enabled() -> bool:
+        # Read straight from the user config so the Linux port adds no key to
+        # ``app.config``, which upstream rewrites often.  ``config.json`` keeps
+        # unknown keys across saves.
+        return bool(config.user_config.get("RESET_WHEN_UNFOCUSED", True))
+
     def can_drive_unfocused_game(self, process_name: str) -> bool:
-        # ``RESET_WHEN_UNFOCUSED`` is read straight from the user config so the
-        # Linux port adds no key to ``app.config``, which upstream rewrites
-        # often.  ``config.json`` keeps unknown keys across saves.
-        if not bool(config.user_config.get("RESET_WHEN_UNFOCUSED", True)):
+        if not self._reset_when_unfocused_enabled():
             return False
         if self._game_keyboard is None or self._game_keyboard is keyboard:
             return False

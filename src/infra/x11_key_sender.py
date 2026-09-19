@@ -24,10 +24,10 @@ X keycodes on an evdev-backed server (Xorg and XWayland alike) are the evdev
 code plus 8, so key names resolve through ``linux_keyboard.key_to_scan_codes``
 and both backends accept exactly the same names.
 
-``FocusAwareKeyboard`` is the piece run control uses: the ``press`` /
-``release`` / ``press_and_release`` surface of the keyboard backend, routed to
-uinput while the game is focused (unchanged behaviour) and to the window sender
-while it is not.
+``GameKeyboard`` is the piece run control uses: the ``press`` / ``release`` /
+``press_and_release`` surface of the keyboard backend plus ``hold``, sent to the
+game's window whether or not it is focused, with uinput as the fallback when
+background rerolling is switched off.
 """
 
 from __future__ import annotations
@@ -36,6 +36,7 @@ import threading
 import time
 from typing import Any, Callable
 
+from core.run_control import RunControlError
 from infra import x11_windows
 from infra.linux_keyboard import key_to_scan_codes
 
@@ -53,9 +54,13 @@ EVDEV_TO_X_KEYCODE_OFFSET = 8
 # gaps are untested, so this errs long.  It is paid once per background reroll.
 DEFAULT_FOCUS_SETTLE_SECONDS = 0.5
 
+HOLD_FOCUS_POLL_SECONDS = 0.05
+HOLD_RETRY_PAUSE_SECONDS = 0.15
+HOLD_MAX_ATTEMPTS = 4
 
-class X11KeySendError(RuntimeError):
-    pass
+
+class X11KeySendError(RunControlError):
+    """A ``RunControlError`` so a failed reset is logged, not raised through the scan loop."""
 
 
 def is_available() -> bool:
@@ -115,6 +120,37 @@ class X11WindowKeySender:
         finally:
             self.release(key)
 
+    def hold(self, key: str | int, seconds: float) -> None:
+        """Keep ``key`` down for an uninterrupted ``seconds``.
+
+        A real focus change in either direction makes the player forget the
+        key (alt-tabbing away sends it a FocusOut; coming back makes it re-read
+        the physical keyboard, where the key is up), which silently turns a
+        hold-to-reset into nothing.  So the hold watches real focus and starts
+        over when it moves instead of leaving the caller to time out.
+        """
+        for _ in range(HOLD_MAX_ATTEMPTS):
+            window_id = self._faked_focus_window or self._resolve_window()
+            focused_at_start = self._has_real_focus(window_id)
+            interrupted = False
+            self.press(key)
+            try:
+                remaining = seconds
+                while remaining > 0:
+                    step = min(HOLD_FOCUS_POLL_SECONDS, remaining)
+                    self._sleep(step)
+                    remaining -= step
+                    if self._has_real_focus(window_id) != focused_at_start:
+                        interrupted = True
+                        break
+            finally:
+                self.release(key)
+            if not interrupted:
+                return
+            # Let the real focus event land before faking the next one.
+            self._sleep(HOLD_RETRY_PAUSE_SECONDS)
+        raise X11KeySendError("Focus kept changing while the key was held.")
+
     @staticmethod
     def _keycode(key: str | int) -> int:
         return key_to_scan_codes(key)[0] + EVDEV_TO_X_KEYCODE_OFFSET
@@ -171,30 +207,28 @@ class X11WindowKeySender:
                 raise X11KeySendError(f"Could not send the key to the game window: {exc}") from exc
 
 
-class FocusAwareKeyboard:
-    """``press``/``release`` that reach the game whether or not it has focus.
+class GameKeyboard:
+    """The keyboard run control drives the game with.
 
-    A key goes out through ``focused`` (uinput) when the game window is active
-    and through ``unfocused`` (the window sender) when it is not.  The route is
-    remembered per key so a release always follows its press, even if focus
-    changed during a long hold.
+    Every key goes to the game's window through ``sender`` while ``enabled()``
+    says so, and through ``fallback`` (uinput) otherwise -- which still needs
+    the game focused, as before.  Routing by focus instead was tried and is a
+    trap: a hold that starts focused and is alt-tabbed away from finishes in
+    whatever window came next.  A release follows the route of its press.
     """
 
-    def __init__(
-        self,
-        focused: Any,
-        unfocused: X11WindowKeySender,
-        *,
-        is_game_window_active: Callable[[], bool],
-    ) -> None:
-        self._focused = focused
-        self._unfocused = unfocused
-        self._is_game_window_active = is_game_window_active
+    def __init__(self, sender: X11WindowKeySender, fallback: Any, *, enabled: Callable[[], bool]) -> None:
+        self._sender = sender
+        self._fallback = fallback
+        self._enabled = enabled
         self._routes: dict[str, Any] = {}
         self._lock = threading.Lock()
 
+    def _route(self) -> Any:
+        return self._sender if self._enabled() else self._fallback
+
     def press(self, key: str | int) -> None:
-        route = self._focused if self._is_game_window_active() else self._unfocused
+        route = self._route()
         with self._lock:
             self._routes[str(key)] = route
         route.press(key)
@@ -202,9 +236,7 @@ class FocusAwareKeyboard:
     def release(self, key: str | int) -> None:
         with self._lock:
             route = self._routes.pop(str(key), None)
-        if route is None:
-            route = self._focused if self._is_game_window_active() else self._unfocused
-        route.release(key)
+        (route or self._route()).release(key)
 
     def press_and_release(self, key: str | int, *, hold_seconds: float = 0.05) -> None:
         self.press(key)
@@ -212,3 +244,14 @@ class FocusAwareKeyboard:
             time.sleep(hold_seconds)
         finally:
             self.release(key)
+
+    def hold(self, key: str | int, seconds: float) -> None:
+        route = self._route()
+        if route is self._sender:
+            self._sender.hold(key, seconds)
+            return
+        route.press(key)
+        try:
+            time.sleep(seconds)
+        finally:
+            route.release(key)
