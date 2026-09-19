@@ -1193,6 +1193,51 @@ class GuiRunControlTests(unittest.TestCase):
         notice.exec.assert_called_once_with()
         notice.deleteLater.assert_called_once_with()
 
+    def test_settings_save_persists_the_background_reroll_toggle(self) -> None:
+        # Linux port: run control reads RESET_WHEN_UNFOCUSED live from
+        # user_config, so reaching user_config is the whole contract.
+        master = FakeSettingsMaster()
+        master.player_stats_vod_recorder = SimpleNamespace(interval_seconds=60)
+        dialog = types.SimpleNamespace(
+            hotkey_entry=FakeEntry("f7"),
+            reset_hotkey_entry=FakeEntry("r"),
+            record_hotkey_entry=FakeEntry("f8"),
+            auto_start_recording_var=FakeCheckbox(False),
+            show_obs_reminder_on_start_scanner_var=FakeCheckbox(False),
+            stop_scanning_on_player_movement_var=FakeCheckbox(True),
+            reset_when_unfocused_var=FakeCheckbox(False),
+            reset_hold_duration_entry=FakeEntry(str(self.SAVED_HOLD_DURATION)),
+            _initial_reset_hold_duration=self.PREVIOUS_HOLD_DURATION,
+            reset_hold_safety_margin_entry=FakeEntry("0.02"),
+            _initial_reset_hold_safety_margin=0.05,
+            record_interval_entry=FakeEntry("60"),
+            master=master,
+            parent=lambda: None,
+            accept=lambda: None,
+        )
+
+        with patch.dict(config.user_config, {"RESET_WHEN_UNFOCUSED": True}), \
+                patch.object(
+                    config,
+                    "read_game_quick_reset_time",
+                    return_value=config.GameConfigReadResult(True, value=0.05),
+                ), \
+                patch.object(
+                    config,
+                    "save_settings_with_game_reset",
+                    return_value=config.SettingsSaveResult(True),
+                ) as save_settings, \
+                patch.object(gui_dialogs, "GameResetTimeNoticeDialog", return_value=MagicMock()):
+            SettingsDialog.save(dialog)
+            saved_candidate = save_settings.call_args.args[0]
+            self.assertIs(saved_candidate["RESET_WHEN_UNFOCUSED"], False)
+            self.assertIs(config.user_config["RESET_WHEN_UNFOCUSED"], False)
+
+            # A dialog without the checkbox (Windows) must not write the key.
+            del dialog.reset_when_unfocused_var
+            SettingsDialog.save(dialog)
+            self.assertNotIn("RESET_WHEN_UNFOCUSED", save_settings.call_args.args[0])
+
     def test_settings_save_contains_live_refresh_failure_after_persistence(self) -> None:
         master = FakeSettingsMaster()
         master.player_stats_vod_recorder = SimpleNamespace(interval_seconds=60)

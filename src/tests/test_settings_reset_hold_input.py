@@ -28,6 +28,16 @@ class SettingsResetHoldInputTests(unittest.TestCase):
         self.assertEqual(checkbox.text(), "Stop scanning when player moves")
         self.assertFalse(checkbox.isChecked())
 
+    @unittest.skipIf(os.name == "nt", "Background rerolling is a Linux-port setting.")
+    def test_background_reroll_checkbox_reflects_config(self) -> None:
+        with patch.dict(config.user_config, {"RESET_WHEN_UNFOCUSED": False}):
+            dialog = SettingsDialog(None, master=MagicMock())
+        self.addCleanup(dialog.close)
+
+        checkbox = dialog.reset_when_unfocused_var
+        self.assertEqual(checkbox.text(), "Keep rerolling when the game is not focused")
+        self.assertFalse(checkbox.isChecked())
+
     def test_support_routes_include_the_crypto_page_button(self) -> None:
         dialog = SettingsDialog(None, master=MagicMock())
         self.addCleanup(dialog.close)

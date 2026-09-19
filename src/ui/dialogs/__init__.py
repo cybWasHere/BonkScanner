@@ -19,6 +19,7 @@ manual check action.
 from __future__ import annotations
 
 import html
+import os
 import re
 import webbrowser
 from copy import deepcopy
@@ -1689,6 +1690,22 @@ class SettingsDialog(QDialog):
             "While Auto-Reroll is active, pressing W, A, S, D or Space pauses it immediately."
         )
         layout.addWidget(self.stop_scanning_on_player_movement_var)
+        if os.name != "nt":
+            # Linux port: the reset key is sent to the game's X11 window, so it
+            # does not need focus.  Read live by run control from user_config.
+            self.reset_when_unfocused_var = QCheckBox(
+                "Keep rerolling when the game is not focused"
+            )
+            self.reset_when_unfocused_var.setChecked(
+                bool(config.user_config.get("RESET_WHEN_UNFOCUSED", True))
+            )
+            self.reset_when_unfocused_var.setToolTip(
+                "Send the reset key straight to the game window so Auto-Reroll carries on "
+                "while you use another window. Off: Auto-Reroll waits for the game to be focused.\n"
+                "On KDE this needs a window rule forcing focus stealing prevention to Extreme "
+                "for window class Megabonk.x86_64, or the game takes focus on every reroll."
+            )
+            layout.addWidget(self.reset_when_unfocused_var)
 
         layout.addWidget(_settings_group_label("On start"))
         self.auto_start_recording_var = QCheckBox("Auto-start recording")
@@ -1830,6 +1847,10 @@ class SettingsDialog(QDialog):
         self.stop_scanning_on_player_movement_var.setChecked(
             bool(getattr(config, "STOP_SCANNING_ON_PLAYER_MOVEMENT", True))
         )
+        if getattr(self, "reset_when_unfocused_var", None) is not None:
+            self.reset_when_unfocused_var.setChecked(
+                bool(config.user_config.get("RESET_WHEN_UNFOCUSED", True))
+            )
         self.auto_start_recording_var.setChecked(
             bool(getattr(config, "AUTO_START_RECORDING", False))
         )
@@ -1941,6 +1962,7 @@ class SettingsDialog(QDialog):
             if movement_checkbox is None
             else _read_bool(movement_checkbox)
         )
+        unfocused_checkbox = getattr(self, "reset_when_unfocused_var", None)
 
         def _read_numeric(entry) -> float:
             if entry is None:
@@ -2043,6 +2065,8 @@ class SettingsDialog(QDialog):
             "STOP_SCANNING_ON_PLAYER_MOVEMENT": stop_scanning_on_player_movement,
             "PLAYER_STATS_RECORD_INTERVAL_SECONDS": new_interval,
         }
+        if unfocused_checkbox is not None:
+            settings_updates["RESET_WHEN_UNFOCUSED"] = _read_bool(unfocused_checkbox)
         if timing_changed:
             settings_updates.update(
                 {
