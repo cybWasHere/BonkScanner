@@ -23,10 +23,18 @@ GAME_WINDOW = 0x3200008
 KEY_R_X_KEYCODE = 19 + 8  # evdev KEY_R + 8
 
 
+ATTENTION_ATOM = 77
+ATOMS = {"_NET_WM_STATE": 76, "_NET_WM_STATE_DEMANDS_ATTENTION": ATTENTION_ATOM}
+
+
 class FakeWindow:
-    def __init__(self, window_id: int, sent: list) -> None:
+    def __init__(self, window_id: int, sent: list, states: list | None = None) -> None:
         self.id = window_id
         self._sent = sent
+        self._states = states if states is not None else []
+
+    def get_full_property(self, atom: int, property_type: int):
+        return SimpleNamespace(value=list(self._states))
 
     def __resource__(self) -> int:
         # python-xlib packs events eagerly and asks window fields for their id.
@@ -42,9 +50,13 @@ class FakeDisplay:
     def __init__(self, focus_id: int) -> None:
         self.focus_id = focus_id
         self.sent: list = []
+        self.states: list = []  # the game window's _NET_WM_STATE
+
+    def intern_atom(self, name: str) -> int:
+        return ATOMS[name]
 
     def create_resource_object(self, kind: str, window_id: int) -> FakeWindow:
-        return FakeWindow(window_id, self.sent)
+        return FakeWindow(window_id, self.sent, self.states)
 
     def screen(self) -> SimpleNamespace:
         return SimpleNamespace(root=FakeWindow(1, self.sent))
@@ -94,11 +106,35 @@ class X11WindowKeySenderTests(unittest.TestCase):
             event_kinds(connection),
             [xevent.FocusIn, xevent.KeyPress, xevent.KeyRelease, xevent.FocusOut],
         )
-        self.assertEqual(sleeps, [0.4])
+        self.assertAlmostEqual(sum(sleeps), 0.4)
         targets = {window_id for window_id, _ in connection.display().sent}
         self.assertEqual(targets, {GAME_WINDOW})
         key_press = connection.display().sent[1][1]
         self.assertEqual(key_press.detail, KEY_R_X_KEYCODE)
+
+    def test_attention_flag_raised_by_the_refused_activation_is_cleared(self) -> None:
+        connection = FakeConnection(0x200000)
+        display = connection.display()
+
+        def cleared() -> bool:
+            return any(isinstance(event, xevent.ClientMessage) for _, event in display.sent)
+
+        def sleep(seconds: float) -> None:
+            # The window manager flags the window a few ms after the FocusIn.
+            if ATTENTION_ATOM not in display.states and not cleared():
+                display.states.append(ATTENTION_ATOM)
+
+        sender = x11_key_sender.X11WindowKeySender(
+            lambda: GAME_WINDOW, focus_settle_seconds=0.4, sleep=sleep, connection=connection,
+        )
+        sender.press("r")
+
+        kinds = event_kinds(connection)
+        self.assertEqual(kinds[0], xevent.FocusIn)
+        self.assertEqual(kinds[1], xevent.ClientMessage)  # cleared before the key goes down
+        self.assertEqual(kinds[-1], xevent.KeyPress)
+        clear = display.sent[1][1]
+        self.assertEqual(list(clear.data[1])[:2], [0, ATTENTION_ATOM])  # remove, DEMANDS_ATTENTION
 
     def test_really_focused_window_gets_no_fake_focus(self) -> None:
         sender, connection, sleeps = self.make_sender(focus_id=GAME_WINDOW)

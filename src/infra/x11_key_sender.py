@@ -54,6 +54,14 @@ EVDEV_TO_X_KEYCODE_OFFSET = 8
 # gaps are untested, so this errs long.  It is paid once per background reroll.
 DEFAULT_FOCUS_SETTLE_SECONDS = 0.5
 
+# A window manager that refuses the player's activation request flags the window
+# "demands attention" instead (KWin does, ~5 ms after the FocusIn), which lights
+# up its taskbar entry and unhides an auto-hidden panel on every reroll.  The
+# flag is cleared as soon as it shows; it is watched this closely for this long
+# after a FocusIn, and at the hold's poll rate after that.
+ATTENTION_WATCH_SECONDS = 0.15
+ATTENTION_POLL_SECONDS = 0.004
+
 HOLD_FOCUS_POLL_SECONDS = 0.05
 HOLD_RETRY_PAUSE_SECONDS = 0.15
 HOLD_MAX_ATTEMPTS = 4
@@ -94,7 +102,7 @@ class X11WindowKeySender:
             if self._faked_focus_window is None and not self._has_real_focus(window_id):
                 self._send_focus(window_id, focused=True)
                 self._faked_focus_window = window_id
-                self._sleep(self._focus_settle_seconds)
+                self._settle_after_fake_focus(window_id)
             self._send_key(window_id, keycode, pressed=True)
             self._held[keycode] = window_id
 
@@ -112,6 +120,7 @@ class X11WindowKeySender:
                 # now would make it deaf to the real keyboard.
                 if not self._has_real_focus(faked):
                     self._send_focus(faked, focused=False)
+                    self._clear_attention(faked)
 
     def press_and_release(self, key: str | int, *, hold_seconds: float = 0.05) -> None:
         self.press(key)
@@ -143,6 +152,8 @@ class X11WindowKeySender:
                     if self._has_real_focus(window_id) != focused_at_start:
                         interrupted = True
                         break
+                    if not focused_at_start:
+                        self._clear_attention(window_id)
             finally:
                 self.release(key)
             if not interrupted:
@@ -150,6 +161,44 @@ class X11WindowKeySender:
             # Let the real focus event land before faking the next one.
             self._sleep(HOLD_RETRY_PAUSE_SECONDS)
         raise X11KeySendError("Focus kept changing while the key was held.")
+
+    def _settle_after_fake_focus(self, window_id: int) -> None:
+        """The focus settle, spent watching for the attention flag."""
+        remaining = self._focus_settle_seconds
+        watch = min(ATTENTION_WATCH_SECONDS, remaining)
+        while watch > 0:
+            step = min(ATTENTION_POLL_SECONDS, watch)
+            self._sleep(step)
+            watch -= step
+            remaining -= step
+            self._clear_attention(window_id)
+        if remaining > 0:
+            self._sleep(remaining)
+        self._clear_attention(window_id)
+
+    def _clear_attention(self, window_id: int) -> None:
+        """Drop ``_NET_WM_STATE_DEMANDS_ATTENTION`` from the window if it is set."""
+        with self._connection.lock:
+            try:
+                display = self._connection.display()
+                window = display.create_resource_object("window", window_id)
+                state_atom = display.intern_atom("_NET_WM_STATE")
+                attention_atom = display.intern_atom("_NET_WM_STATE_DEMANDS_ATTENTION")
+                states = window.get_full_property(state_atom, X.AnyPropertyType)
+                if states is None or attention_atom not in list(states.value):
+                    return
+                # action 0 = remove; source indication 2 = pager, which a window
+                # manager obeys where it might ignore the application itself.
+                message = xevent.ClientMessage(
+                    window=window, client_type=state_atom, data=(32, [0, attention_atom, 0, 2, 0]),
+                )
+                display.screen().root.send_event(
+                    message, event_mask=X.SubstructureRedirectMask | X.SubstructureNotifyMask,
+                )
+                display.flush()
+            except Exception:
+                # Cosmetic; never worth failing a reset over.
+                return
 
     @staticmethod
     def _keycode(key: str | int) -> int:
