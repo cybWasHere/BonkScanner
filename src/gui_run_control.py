@@ -84,6 +84,9 @@ class RunControl:
         self._toggle_overlay_edit = toggle_overlay_edit
 
         self.run_control_provider = None
+        self._game_keyboard = None
+        self._rerolling_in_background = False
+        self._unfocused_window_check: tuple[float, str, bool] = (0.0, "", False)
         self._hotkey_manager = None
         self.player_movement_guard_available = not bool(
             getattr(config, "STOP_SCANNING_ON_PLAYER_MOVEMENT", True)
@@ -97,11 +100,53 @@ class RunControl:
         self.enable_keyboard_run_control()
 
     def enable_keyboard_run_control(self):
+        self._game_keyboard = self._build_game_keyboard()
         self.run_control_provider = KeyboardRunControlProvider(
-            keyboard,
+            self._game_keyboard,
             reset_hotkey=lambda: config.RESET_HOTKEY,
             reset_hold_duration=lambda: config.RESET_HOLD_DURATION,
         )
+
+    def _build_game_keyboard(self):
+        """The keyboard the game is driven with.
+
+        On Linux that is a router: uinput while the game has focus, and key
+        events sent straight to the game's X11 window while it does not, which
+        is what lets auto-reroll carry on in the background.  Everywhere else,
+        and whenever X11 is unusable, it is the plain keyboard backend.
+        """
+        if keyboard is None or os.name == "nt":
+            return keyboard
+        try:
+            from infra import x11_key_sender
+        except Exception:
+            return keyboard
+        if not x11_key_sender.is_available():
+            return keyboard
+        return x11_key_sender.FocusAwareKeyboard(
+            keyboard,
+            x11_key_sender.X11WindowKeySender(
+                lambda: self.find_game_window(config.PROCESS_NAME),
+            ),
+            is_game_window_active=lambda: self.is_game_window_active(config.PROCESS_NAME),
+        )
+
+    def can_drive_unfocused_game(self, process_name: str) -> bool:
+        # ``RESET_WHEN_UNFOCUSED`` is read straight from the user config so the
+        # Linux port adds no key to ``app.config``, which upstream rewrites
+        # often.  ``config.json`` keeps unknown keys across saves.
+        if not bool(config.user_config.get("RESET_WHEN_UNFOCUSED", True)):
+            return False
+        if self._game_keyboard is None or self._game_keyboard is keyboard:
+            return False
+        # The scan loop asks this from a 10 ms poll, and finding the window
+        # walks every top-level X window, so the answer is kept for a moment.
+        now = time.monotonic()
+        cached_at, cached_name, cached = self._unfocused_window_check
+        if cached_name != process_name or now - cached_at > 0.5:
+            cached = self.find_game_window(process_name) is not None
+            self._unfocused_window_check = (now, process_name, cached)
+        return cached
 
     def check_admin_rights(self):
         if os.name != "nt":
@@ -273,9 +318,20 @@ class RunControl:
             return True
         return self.foreground_game_process_id(process_name) is not None
 
+    def can_drive_game(self, process_name: str) -> bool:
+        """Whether a key sent now would reach the game: focused, or drivable unfocused."""
+        return self.is_game_window_active(process_name) or self.can_drive_unfocused_game(process_name)
+
     def wait_for_game_window_focus(self, process_name: str) -> bool:
         if self.is_game_window_active(process_name):
+            self._rerolling_in_background = False
             return True
+        if self.can_drive_unfocused_game(process_name):
+            if not self._rerolling_in_background:
+                self._rerolling_in_background = True
+                self._log("[*] Game window is not active. Auto-reroll continues in the background.")
+            return True
+        self._rerolling_in_background = False
         self._log("[WAIT] Game window is not active. Auto-reroll paused...", tag="warning")
         while not self._abort_requested() and not self.is_game_window_active(process_name):
             time.sleep(0.3)
@@ -493,7 +549,7 @@ class RunControl:
         if keyboard:
             if not self.wait_for_game_window_focus(process_name):
                 return False
-            keyboard.press_and_release("esc")
+            (self._game_keyboard or keyboard).press_and_release("esc")
 
         return True
 

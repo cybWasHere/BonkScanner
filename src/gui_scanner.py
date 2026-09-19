@@ -970,7 +970,7 @@ class Scanner:
                 break
 
             try:
-                focus_was_active = self._run_control.is_game_window_active(process_name)
+                focus_was_active = self._run_control.can_drive_game(process_name)
                 if not self._run_control.wait_for_game_window_focus(process_name):
                     continue
                 if self._disconnect_stale_scanner_client(process_name):
@@ -989,7 +989,7 @@ class Scanner:
                         previous_state=last_state,
                         previous_stats=last_stats,
                         require_change=not is_first_scan,
-                        abort_condition=lambda: self._scan_abort_requested() or not self._run_control.is_game_window_active(process_name),
+                        abort_condition=lambda: self._scan_abort_requested() or not self._run_control.can_drive_game(process_name),
                         timeout=10.0,
                     )
                 except InterruptedError:
