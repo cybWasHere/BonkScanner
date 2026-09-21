@@ -215,6 +215,7 @@ class PlayerStatsClient:
         "RSG_CONTROLLER_TYPE_INFO_OFFSET": "RsgController",
         "ACHIEVEMENT_TRACKER_TYPE_INFO_OFFSET": "AchievementTracker",
         "SHRINE_LOGS_TYPE_INFO_OFFSET": "ShrineLogs",
+        "MY_PLAYER_TYPE_INFO_OFFSET": "MyPlayer",
     }
     CLASS_STATIC_FIELDS_OFFSET = 0xB8
     MY_PLAYER_INSTANCE_OFFSET = 0x08
