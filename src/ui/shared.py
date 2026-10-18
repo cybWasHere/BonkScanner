@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import sys
+import time
 
 from core.template_conditions import (
     TEMPLATE_CONDITION_KEYS,
@@ -291,6 +292,7 @@ class StagedLoadingSpinner(QWidget):
         *,
         colors: tuple[str, ...] = ("#38BDF8",),
         object_name: str = "StagedLoadingSpinner",
+        animation_interval_ms: int = 30,
         parent=None,
     ) -> None:
         super().__init__(parent)
@@ -302,23 +304,32 @@ class StagedLoadingSpinner(QWidget):
         self._colors = tuple(QColor(color) for color in colors) or (
             QColor("#38BDF8"),
         )
-        self._angle = 0
+        self._angle = 0.0
+        self._last_advance_at: float | None = None
         self._timer = QTimer(self)
-        self._timer.setInterval(30)
+        self._timer.setTimerType(Qt.PreciseTimer)
+        self._timer.setInterval(animation_interval_ms)
         self._timer.timeout.connect(self._advance)
 
     def _advance(self) -> None:
-        self._angle = (self._angle + 14) % 360
+        now = time.perf_counter()
+        previous = self._last_advance_at
+        self._last_advance_at = now
+        if previous is not None:
+            # Keep angular speed stable when the event loop delivers a frame late.
+            self._angle = (self._angle + (now - previous) * (14 / 0.03)) % 360
         self.update()
 
     def stop(self) -> None:
         """Stop repaint scheduling before the owning surface is retired."""
         self._timer.stop()
+        self._last_advance_at = None
 
     def showEvent(self, event) -> None:
         super().showEvent(event)
         timer = getattr(self, "_timer", None)
         if timer is not None:
+            self._last_advance_at = time.perf_counter()
             timer.start()
 
     def hideEvent(self, event) -> None:
@@ -594,6 +605,46 @@ def resource_path(relative_path: str) -> str:
         normalized = relative_path.replace("\\", "/")
         base_path = source_path if normalized == "media" or normalized.startswith("media/") else repo_root
     return os.path.join(base_path, relative_path)
+
+
+class PremiumFeatureBadge(QPushButton):
+    """Compact plan marker that explains a locked Premium setting."""
+
+    def __init__(
+        self,
+        *,
+        has_access: bool,
+        open_support,
+        parent: QWidget | None = None,
+    ) -> None:
+        super().__init__("Premium", parent)
+        self._has_access = False
+        self._open_support = open_support
+        self.setObjectName("PremiumFeatureBadge")
+        self.setIcon(QIcon(resource_path("media/premium_access_icon.svg")))
+        self.setIconSize(QSize(13, 13))
+        self.setFixedHeight(22)
+        self.clicked.connect(self._on_clicked)
+        self.set_access_state(has_access)
+
+    def set_access_state(self, has_access: bool) -> None:
+        self._has_access = bool(has_access)
+        self.setProperty("premiumState", "active" if self._has_access else "locked")
+        self.setCursor(Qt.ArrowCursor if self._has_access else Qt.PointingHandCursor)
+        self.setFocusPolicy(Qt.NoFocus if self._has_access else Qt.StrongFocus)
+        self.setToolTip(
+            "Included with your active Premium access."
+            if self._has_access
+            else "Requires Premium. Open Support settings."
+        )
+        self.style().unpolish(self)
+        self.style().polish(self)
+        self.update()
+
+    def _on_clicked(self) -> None:
+        if not self._has_access and callable(self._open_support):
+            self._open_support()
+
 
 # The six accessors below each carried a second branch speaking tkinter --
 # `widget.get()`, `configure(text=...)`, `delete(0, "end")`, `insert(0, text)`,

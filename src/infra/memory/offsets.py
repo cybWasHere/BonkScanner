@@ -49,6 +49,12 @@ WINDOWS: dict[str, int] = {
     # static ``Action<EStat>`` event whose bound target is the live
     # ``PlayerStatsNew``; offset 0x40 of an IL2CPP delegate is that target.
     "PlayerStatsRoot": 0x02F6A4B8,
+    # Map-marker client: minimap, HUD toggle, desert storm, challenge modifiers, merchant.
+    "MinimapCamera": 0x2F5D440,
+    "SaveManager": 0x2F7C7C0,
+    "MapEventsDesert": 0x2F58F58,
+    "ChallengesTracker": 0x2F7A598,
+    "InteractableShadyGuy": 0x2FB5928,
 }
 
 # Native Linux build, Steam build 21750826 (verified against the running game
@@ -78,6 +84,12 @@ LINUX: dict[str, int] = {
     # PlayerStatusEffects.A_StatusModifiedStat (0x515BE78) bind the same
     # target and would serve equally.
     "PlayerStatsRoot": 0x515A610,
+    # Read from the 2026-09-13 dump of build 21750826, not yet verified live.
+    "MinimapCamera": 0x515B318,
+    "SaveManager": 0x515C980,
+    "MapEventsDesert": 0x515AFD0,
+    "ChallengesTracker": 0x5157660,
+    "InteractableShadyGuy": 0x515A2C0,
 }
 
 TABLES: dict[str, Mapping[str, int]] = {"windows": WINDOWS, "linux": LINUX}
