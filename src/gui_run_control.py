@@ -28,6 +28,9 @@ from app import config
 from infra.hotkeys import HotkeyBinding, ModifierAwareHotkeyManager
 from infra.keyboard_run_control import KeyboardRunControlProvider
 from infra import process
+from infra.input_permissions import inspect_privileges, privilege_relation
+from infra.key_state import WindowsKeyState
+from infra.keyboard_runtime import keyboard_operation
 
 # pywin32 on Windows, the X11 shim on Linux, or None when neither is usable.
 from infra.winapi import win32gui, win32process
@@ -88,6 +91,7 @@ class RunControl:
         self._rerolling_in_background = False
         self._unfocused_window_check: tuple[float, str, bool] = (0.0, "", False)
         self._hotkey_manager = None
+        self._restart_permission: tuple[int | None, str] = (None, "unknown")
         self.player_movement_guard_available = not bool(
             getattr(config, "STOP_SCANNING_ON_PLAYER_MOVEMENT", True)
         )
@@ -154,15 +158,45 @@ class RunControl:
         return cached
 
     def check_admin_rights(self):
+        """Startup alone proves nothing; permissions are checked when Start connects.
+
+        On Linux, memory reads need ptrace rights, which can be checked up front."""
         if os.name != "nt":
             hint = process.memory_access_hint()
             if hint:
                 self._log(f"⚠️ WARNING: {hint}", tag="warning")
-            return
-        if not process.is_running_as_admin():
-            self._log("\u26a0\ufe0f WARNING: Script is not running as Administrator!", tag="warning")
-            self._log("\u26a0\ufe0f Hotkeys may not work while the game window is active.", tag="warning")
 
+    def reset_restart_permission_check(self) -> None:
+        self._restart_permission = (None, "unknown")
+
+    def check_restart_permissions(self, target_pid: int | None = None) -> bool:
+        """Check once per monitor connection, never per F6 or per restart."""
+        if os.name != "nt":
+            return True
+        if target_pid is None:
+            target_pid = self.get_game_process_id()
+        if target_pid is None:
+            return True  # Defer until the game exists, not a successful check.
+        if self._restart_permission[0] == target_pid:
+            return self._restart_permission[1] != "mismatch"
+        relation = privilege_relation(inspect_privileges(os.getpid()), inspect_privileges(target_pid))
+        self._restart_permission = (target_pid, relation)
+        if relation == "mismatch":
+            self._log(
+                "[SAFETY] Auto-reroll was not started: Megabonk is running with higher "
+                "privileges than BonkScanner. Restart BonkScanner as administrator, "
+                "or restart the game without administrator privileges.", tag="warning")
+            return False
+        # Unknown preserves the previous behavior without blaming permissions.
+        return True
+
+    def _key_state_foreground_accessible(self, pid: int) -> bool:
+        if pid == os.getpid():
+            return True
+        # Reuse the connection's check. Other foreground apps remain unknown;
+        # key repair does not poll their tokens or infer access from zeroes.
+        return (self._restart_permission == (pid, "no_mismatch")
+                and self.attached_game_process_id() == pid)
 
     def setup_hotkeys(self):
         guard_enabled = bool(
@@ -176,10 +210,15 @@ class RunControl:
             if previous_manager is not None:
                 previous_manager.stop()
                 self._hotkey_manager = None
+            state_options = {}
+            if os.name == "nt" and hasattr(keyboard, "_listener"):
+                state_options["state_reader"] = WindowsKeyState(
+                    keyboard, self._key_state_foreground_accessible)
             manager = ModifierAwareHotkeyManager(
                 keyboard,
                 allowed_game_keys=getattr(config, "HOTKEY_GAME_KEY_WHITELIST", ()),
                 is_game_window_active=lambda: self.is_game_window_active(config.PROCESS_NAME),
+                **state_options,
             )
             bindings = [
                 HotkeyBinding(config.HOTKEY, self.hotkey_toggle_scanning),
@@ -554,7 +593,7 @@ class RunControl:
         if keyboard:
             if not self.wait_for_game_window_focus(process_name):
                 return False
-            (self._game_keyboard or keyboard).press_and_release("esc")
+            keyboard_operation(self._game_keyboard or keyboard, "press_and_release", "esc")
 
         return True
 

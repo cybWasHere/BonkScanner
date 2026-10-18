@@ -1,12 +1,9 @@
 """The supporters list in the footer popup, and the reader that fills it.
 
-The first test is the one that matters most. The shipping state is the empty
-one -- nobody has subscribed, or the request failed -- and it has to stay
-indistinguishable from the card that was there before the list existed.
-
-The `SupportersLoadTests` half covers the other end: `supporters.json` is a file
-maintained by hand in a browser, so a half-saved edit or a dead network is a
-normal Tuesday, not an exceptional case, and none of them may reach the screen.
+The empty list keeps the simple support card, but valid live Founder metadata
+still appears. Failures retain names without claiming a stale slot count.
+The loading tests cover the live service, legacy/static fallback, and single-
+flight periodic/stale refresh without exposing network exceptions in the UI.
 """
 import src  # noqa: F401  -- puts src/ on the path, as the other tests do
 
@@ -16,13 +13,14 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
-from PySide6.QtCore import QPoint, QSize
-from PySide6.QtGui import QPalette
+from PySide6.QtCore import QPoint, QRect, QSize
+from PySide6.QtGui import QFontDatabase, QPalette
 from PySide6.QtWidgets import QApplication, QFrame, QLabel, QPushButton, QWidget
 
 from app import supporters as supporters_flow
 from app import config
 from infra import updater
+from core.supporter_listing import FounderSlots, SupporterDirectory
 from ui.dialogs import update_prompt
 from ui.footer import FOOTER_HEIGHT, SUPPORT_BADGE_ICON_SIZE, FooterView, SupportPopup
 from ui.shared import resource_path
@@ -299,18 +297,33 @@ class SupportPopupTests(unittest.TestCase):
             )
 
     def test_two_row_legend_does_not_clip_any_caption(self):
+        # Windows' offscreen Qt backend has no system fonts until explicitly loaded.
+        for filename in ("segoeui.ttf", "segoeuib.ttf", "seguisb.ttf"):
+            font_path = Path("C:/Windows/Fonts") / filename
+            if font_path.exists():
+                font_id = QFontDatabase.addApplicationFont(str(font_path))
+                if font_id >= 0:
+                    self.addCleanup(QFontDatabase.removeApplicationFont, font_id)
         previous_stylesheet = _app.styleSheet()
         self.addCleanup(_app.setStyleSheet, previous_stylesheet)
         checkmark_path = resource_path("media/checkmark.svg").replace("\\", "/")
         _app.setStyleSheet(build_qt_app_stylesheet(checkmark_path))
 
-        self.popup.set_supporters(["PrestoOmento"])
-        self.popup.show()
-        _app.processEvents()
+        for payload in (
+            ["PrestoOmento"],
+            SupporterDirectory(("PrestoOmento",), FounderSlots(10, 20, 10)),
+            SupporterDirectory(None),
+        ):
+            self.popup.set_supporters(payload)
+            self.popup.show()
+            _app.processEvents()
+            _app.processEvents()  # Settle deferred layout changes after switching payloads.
 
-        for label in self.popup._legend.findChildren(QLabel):
-            with self.subTest(label=label.objectName()):
-                self.assertGreaterEqual(label.width(), label.sizeHint().width())
+            for label in self.popup._legend.findChildren(QLabel):
+                if label.isHidden():
+                    continue  # Hidden legacy counters do not occupy layout space.
+                with self.subTest(payload=payload, label=label.objectName()):
+                    self.assertGreaterEqual(label.width(), label.sizeHint().width())
 
     def test_source_controls_colour_and_badges_control_icons(self):
         self.popup.set_supporters(
@@ -432,7 +445,7 @@ class SupportPopupTests(unittest.TestCase):
 
         self.assertEqual(
             [text for text, _name in _rows(self.popup)],
-            ["patreon one", "patreon two", "direct one", "plain one"],
+            ["plain one", "direct one", "patreon one", "patreon two"],
         )
 
     def test_a_source_is_matched_however_it_was_typed(self):
@@ -462,12 +475,19 @@ class SupportPopupTests(unittest.TestCase):
         self.assertEqual(_rows(self.popup), [("typo", "supporterName")])
         self.assertEqual(_badges(self.popup), {"typo": ("extrasupport",)})
 
-    def test_count_is_everyone_even_when_the_list_is_capped(self):
-        people = [f"person {index}" for index in range(SupportPopup.MAX_LISTED + 6)]
+    def test_all_supporters_remain_scrollable(self):
+        people = [f"person {index}" for index in range(100)]
         self.popup.set_supporters(people)
-        self.assertEqual(len(_names(self.popup)), SupportPopup.MAX_LISTED)
+        self.popup.show()
+        _app.processEvents()
+        self.assertEqual(len(_names(self.popup)), len(people))
         self.assertIn(str(len(people)), self.popup._title.text())
-        self.assertIn("6 more", self.popup._note.text())
+        scrollbar = self.popup._names_scroll.verticalScrollBar()
+        self.assertGreater(scrollbar.maximum(), 0)
+        scrollbar.setValue(scrollbar.maximum())
+        last = self.popup._names_grid.itemAtPosition(49, 1).widget()
+        self.assertTrue(self.popup._names_scroll.viewport().rect().intersects(
+            last.geometry().translated(0, -scrollbar.value())))
 
     def test_going_back_to_empty_restores_the_plain_card(self):
         self.popup.set_supporters(["Someone"])
@@ -477,6 +497,86 @@ class SupportPopupTests(unittest.TestCase):
         self.assertFalse(self.popup._legend.isVisibleTo(self.popup))
         self.assertEqual(self.popup._title.text(), "Support BonkScanner")
         self.assertEqual(self.popup._note.text(), SupportPopup.DEFAULT_NOTE)
+
+    def test_empty_live_directory_still_shows_founder_counter(self):
+        self.popup.set_supporters(SupporterDirectory((), FounderSlots(9, 20, 11)))
+        self.assertEqual(_names(self.popup), [])
+        self.assertEqual("9/20", self.popup._founder_count.text())
+        self.assertFalse(self.popup._founder_count.isHidden())
+
+    def test_founder_counter_is_muted_and_compact(self):
+        previous_style = _app.styleSheet()
+        self.addCleanup(_app.setStyleSheet, previous_style)
+        _app.setStyleSheet(build_qt_app_stylesheet(resource_path("media/checkmark.svg").replace("\\", "/")))
+        self.popup.set_supporters(SupporterDirectory(("Existing",), FounderSlots(10, 20, 10)))
+        self.popup.ensurePolished()
+        self.popup._founder_count.ensurePolished()
+        self.assertEqual(self.popup._founder_count.text(), "10/20")
+        self.assertEqual(self.popup._founder_count.palette().color(QPalette.WindowText).name(), "#8a94a3")
+
+    def test_founder_counter_moves_inline_and_back_for_empty_list(self):
+        slots = FounderSlots(10, 20, 10)
+        self.popup.set_supporters(SupporterDirectory(("Existing",), slots))
+        founder = self.popup.findChild(QLabel, "supporterLegendFounder")
+        self.assertIs(self.popup._founder_count.parentWidget(), founder.parentWidget())
+        self.assertTrue(self.popup._founder_host.isHidden())
+        self.assertEqual(founder.parentWidget().layout().indexOf(self.popup._founder_count), 2)
+        self.popup.set_supporters(SupporterDirectory((), slots))
+        self.assertIs(self.popup._founder_count.parentWidget(), self.popup._founder_host)
+        self.assertFalse(self.popup._founder_host.isHidden())
+        self.assertEqual(self.popup._founder_count.text(), "10/20")
+        self.popup.set_supporters(SupporterDirectory(("Existing",), slots))
+        self.assertIs(self.popup._founder_count.parentWidget(), founder.parentWidget())
+        self.assertTrue(self.popup._founder_host.isHidden())
+
+    def test_failure_keeps_names_but_invalidates_counter_and_empty_clears(self):
+        self.popup.set_supporters(SupporterDirectory(("Existing",), FounderSlots(20, 20, 0)))
+        self.assertEqual("20/20", self.popup._founder_count.text())
+        self.popup.set_supporters(SupporterDirectory(None))
+        self.assertEqual(_names(self.popup), ["Existing"])
+        self.assertNotIn("20/20", self.popup._founder_count.text())
+        self.popup.set_supporters(SupporterDirectory(()))
+        self.assertEqual(_names(self.popup), [])
+
+    def test_grid_follows_server_order_left_to_right(self):
+        self.popup.set_supporters(["First", "Second", "Third", "Fourth"])
+        self.assertEqual(self.popup._names_grid.count(), 4)
+        for index, name in enumerate(("First", "Second", "Third", "Fourth")):
+            row = self.popup._names_grid.itemAtPosition(index // 2, index % 2).widget()
+            self.assertIn(name, [label.text() for label in row.findChildren(QLabel)])
+
+
+class SupporterDirectoryTests(unittest.TestCase):
+    def test_metadata_validation(self):
+        for metadata in ({}, None, {"used": True, "limit": 20, "remaining": 19},
+                         {"used": 9, "limit": 20, "remaining": 12},
+                         {"used": 21, "limit": 20, "remaining": -1}):
+            self.assertIsNone(FounderSlots.parse(metadata))
+        self.assertEqual(FounderSlots.parse({"used": 9, "limit": 20, "remaining": 11}), FounderSlots(9, 20, 11))
+
+    def test_live_empty_is_successful_and_does_not_fetch_fallback(self):
+        response = MagicMock()
+        response.json.return_value = {"supporters": [], "founder_slots": {"used": 9, "limit": 20, "remaining": 11}}
+        with patch("requests.get", return_value=response) as get:
+            directory = updater.fetch_supporter_directory()
+        self.assertEqual(get.call_count, 1)
+        self.assertEqual(directory, SupporterDirectory((), FounderSlots(9, 20, 11)))
+
+    def test_static_fallback_never_supplies_a_live_counter(self):
+        import requests
+        response = MagicMock()
+        response.json.return_value = {"supporters": ["Fallback"], "founder_slots": {"used": 0, "limit": 20, "remaining": 20}}
+        with patch("requests.get", side_effect=[requests.ConnectionError("offline"), response]):
+            directory = updater.fetch_supporter_directory()
+        self.assertEqual(directory, SupporterDirectory(("Fallback",)))
+
+    def test_legacy_json_and_invalid_metadata_keep_the_list(self):
+        response = MagicMock()
+        for payload in (["Legacy"], {"supporters": ["Legacy"]},
+                        {"supporters": ["Legacy"], "founder_slots": {"used": "9"}}):
+            response.json.return_value = payload
+            with patch("requests.get", return_value=response):
+                self.assertEqual(updater.fetch_supporter_directory(), SupporterDirectory(("Legacy",)))
 
 
 class SupportPopupPlacementTests(unittest.TestCase):
@@ -567,7 +667,7 @@ class SupportPopupPlacementTests(unittest.TestCase):
         self.addCleanup(popup.close)
 
         heights = []
-        for count in (2, 8, SupportPopup.MAX_LISTED):
+        for count in (2, 8, 24):
             popup.set_supporters([f"Supporter {index}" for index in range(count)])
             # Twice: the placement that matters happens on the pass after the
             # rows become measurable. See `SupportPopup._reanchor`.
@@ -585,12 +685,13 @@ class SupportPopupPlacementTests(unittest.TestCase):
         self.assertEqual(heights, sorted(heights))
         self.assertLess(heights[0], heights[-1])
 
-        # And it stops growing: `MAX_LISTED` caps the rows, so a list ten times
-        # longer is exactly as tall. Nothing here can outgrow a screen.
+        # A longer list scrolls without outgrowing the available screen.
         popup.set_supporters([f"Supporter {index}" for index in range(240)])
         _app.processEvents()
         _app.processEvents()
-        self.assertEqual(popup.geometry().height(), heights[-1])
+        self.assertLessEqual(popup.geometry().height(), window.screen().availableGeometry().height())
+        self.assertGreater(popup._names_scroll.verticalScrollBar().maximum(), 0)
+        self.assertEqual(len(_names(popup)), 240)
 
     def test_the_card_is_kept_on_the_screen(self):
         window, anchor = self._anchor()
@@ -611,44 +712,62 @@ class SupportPopupPlacementTests(unittest.TestCase):
             f"{popup.geometry()} is not inside {available}",
         )
 
+    def test_long_list_fits_a_small_scaled_screen(self):
+        window, anchor = self._anchor()
+        popup = SupportPopup(window)
+        self.addCleanup(popup.deleteLater)
+        available = QRect(0, 0, 480, 360)
+        popup.screen = lambda: SimpleNamespace(availableGeometry=lambda: available)
+        popup.set_supporters(SupporterDirectory(tuple("Very long supporter name " + str(i) for i in range(100)),
+                                               FounderSlots(10, 20, 10)))
+        popup.show_above(anchor)
+        self.addCleanup(popup.close)
+        _app.processEvents()
+        _app.processEvents()
+        self.assertTrue(available.contains(popup.geometry()), str(popup.geometry()))
+        self.assertEqual(len(_names(popup)), 100)
+        self.assertGreater(popup._names_scroll.verticalScrollBar().maximum(), 0)
+
 
 class SupportersLoadTests(unittest.TestCase):
     def setUp(self):
         self.reported: list = []
-        self._real_fetch = updater.fetch_supporters
-        self.addCleanup(setattr, updater, "fetch_supporters", self._real_fetch)
+        self._real_fetch = updater.fetch_supporter_directory
+        self.addCleanup(setattr, updater, "fetch_supporter_directory", self._real_fetch)
 
     def _fetch_returns(self, value):
-        updater.fetch_supporters = lambda: value
+        updater.fetch_supporter_directory = lambda: SupporterDirectory(tuple(value))
 
     def _fetch_raises(self, error):
         def fetch():
             raise error
 
-        updater.fetch_supporters = fetch
+        updater.fetch_supporter_directory = fetch
 
     def test_names_are_reported(self):
         self._fetch_returns(["Grimwald", "Nyxaria"])
 
         supporters_flow.load_supporters(self.reported.append)
 
-        self.assertEqual(self.reported, [["Grimwald", "Nyxaria"]])
+        self.assertEqual(self.reported, [SupporterDirectory(("Grimwald", "Nyxaria"))])
 
-    def test_a_failed_request_reports_nothing(self):
-        self._fetch_raises(RuntimeError("no network"))
+    def test_a_failed_request_reports_failure_without_clearing_names(self):
+        self._fetch_raises(RuntimeError("verbose network details"))
 
-        supporters_flow.load_supporters(self.reported.append)
+        with patch("builtins.print") as print_mock:
+            supporters_flow.load_supporters(self.reported.append)
 
-        self.assertEqual(self.reported, [])
+        self.assertEqual(self.reported, [SupporterDirectory(None)])
+        print_mock.assert_called_once_with(
+            "Failed to fetch supporters: no connection"
+        )
 
-    def test_an_empty_list_reports_nothing(self):
-        # Not the same as "report an empty list": the strip already ships empty,
-        # and a call here would only risk `♥ 0 supporters` if that rule moved.
+    def test_an_empty_list_reports_success_to_clear_previous_names(self):
         self._fetch_returns([])
 
         supporters_flow.load_supporters(self.reported.append)
 
-        self.assertEqual(self.reported, [])
+        self.assertEqual(self.reported, [SupporterDirectory(())])
 
     def test_load_does_nothing_without_a_footer_or_a_scheduler(self):
         # `build_layout` has not run yet, or an app stand-in has neither. The
@@ -658,7 +777,7 @@ class SupportersLoadTests(unittest.TestCase):
         update_prompt.start_supporters_load(None)
         update_prompt.start_supporters_load(object())
 
-    def test_load_refreshes_every_ten_minutes_without_duplicate_loops(self):
+    def test_load_refreshes_every_hour_without_duplicate_loops(self):
         class Footer:
             def __init__(self) -> None:
                 self.received = []
@@ -715,10 +834,7 @@ class SupportersLoadTests(unittest.TestCase):
             self.assertEqual(len(app.scheduled), 1)
 
             delay_ms, refresh = app.scheduled.pop()
-            self.assertEqual(
-                delay_ms,
-                update_prompt.SUPPORTERS_REFRESH_INTERVAL_MS,
-            )
+            self.assertEqual(delay_ms, 60 * 60 * 1000)
             second_worker = refresh()
             self.assertIs(second_worker, workers[1])
             self.assertEqual(loads, [1, 2])
@@ -737,6 +853,65 @@ class SupportersLoadTests(unittest.TestCase):
             updater.clean_supporters(["Grimwald", 5, None, {"name": "Nyxaria"}]),
             ["Grimwald", {"name": "Nyxaria"}],
         )
+
+    def test_popup_stale_refresh_is_single_flight_and_retains_one_timer(self):
+        from types import SimpleNamespace
+        callbacks, timers = [], []
+        footer = SimpleNamespace(set_supporters=lambda value: None)
+        app = SimpleNamespace(footer=footer, after=lambda delay, callback: callback() if delay == 0 else timers.append(callback))
+        worker = SimpleNamespace(is_alive=lambda: True)
+        def start(_app, *, target, **kwargs):
+            callbacks.append(target)
+            return worker
+        with patch.object(update_prompt, "_start_registered_thread", side_effect=start), \
+             patch.object(update_prompt, "load_supporters", side_effect=lambda report: report([])), \
+             patch.object(update_prompt.time, "monotonic", return_value=1000) as clock:
+            update_prompt.start_supporters_load(app)
+            self.assertIsNone(footer.refresh_supporters_if_stale())
+            self.assertEqual(len(callbacks), 1)
+            callbacks.pop()()
+            clock.return_value = 2799
+            self.assertIsNone(footer.refresh_supporters_if_stale())
+            clock.return_value = 2800
+            self.assertIs(footer.refresh_supporters_if_stale(), worker)
+            self.assertIsNone(footer.refresh_supporters_if_stale())
+            self.assertEqual(len(callbacks), 1)
+            self.assertEqual(len(timers), 1)
+            self.assertIsNone(update_prompt.start_supporters_load(app))
+
+    def test_popup_retries_failed_load_after_five_minutes(self):
+        from types import SimpleNamespace
+
+        received, callbacks, timers = [], [], []
+        footer = SimpleNamespace(set_supporters=received.append)
+        app = SimpleNamespace(
+            footer=footer,
+            after=lambda delay, callback: callback() if delay == 0 else timers.append(callback),
+        )
+        worker = SimpleNamespace(is_alive=lambda: True)
+        results = iter((SupporterDirectory(None), SupporterDirectory(("Recovered",))))
+
+        def start(_app, *, target, **kwargs):
+            callbacks.append(target)
+            return worker
+
+        with patch.object(update_prompt, "_start_registered_thread", side_effect=start), \
+             patch.object(update_prompt, "load_supporters", side_effect=lambda report: report(next(results))), \
+             patch.object(update_prompt.time, "monotonic", return_value=1000) as clock:
+            update_prompt.start_supporters_load(app)
+            callbacks.pop()()
+            self.assertEqual(received, [SupporterDirectory(None)])
+
+            clock.return_value = 1299
+            self.assertIsNone(footer.refresh_supporters_if_stale())
+            clock.return_value = 1300
+            self.assertIs(footer.refresh_supporters_if_stale(), worker)
+            callbacks.pop()()
+            self.assertEqual(received[-1], SupporterDirectory(("Recovered",)))
+
+            clock.return_value = 3099
+            self.assertIsNone(footer.refresh_supporters_if_stale())
+            self.assertEqual(len(timers), 1)
 
     def test_clean_supporters_rejects_a_payload_that_is_neither_shape(self):
         # What a mis-edited file looks like: an object without the key, a bare
