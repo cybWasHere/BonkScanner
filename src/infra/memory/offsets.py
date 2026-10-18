@@ -84,7 +84,7 @@ LINUX: dict[str, int] = {
     # PlayerStatusEffects.A_StatusModifiedStat (0x515BE78) bind the same
     # target and would serve equally.
     "PlayerStatsRoot": 0x515A610,
-    # Read from the 2026-09-13 dump of build 21750826, not yet verified live.
+    # From the 2026-09-13 dump; verified against the running game on 2026-10-18.
     "MinimapCamera": 0x515B318,
     "SaveManager": 0x515C980,
     "MapEventsDesert": 0x515AFD0,
